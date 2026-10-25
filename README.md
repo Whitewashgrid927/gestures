@@ -2,7 +2,7 @@
 
 A native Mac prototype for defining your own camera-based hand gestures and assigning actions. Built with SwiftUI, native Liquid Glass, AVFoundation, and Apple Vision. No accounts, external packages, cloud inference, or downloaded models are required. The optional desktop ripple uses local ScreenCaptureKit and Metal.
 
-**[Download Gestures 0.2.3 for Mac](https://github.com/Whitewashgrid927/gestures/releases/download/v0.2.3/Gestures-0.2.3-macOS-arm64.zip)** — Apple silicon, macOS 26 or newer. Unzip the download and move **Gestures.app** to **Applications**. No build tools are needed. The app is Developer ID signed and notarized by Apple. If updating, quit Gestures from its menu-bar menu before replacing the existing app; your saved gestures remain in place.
+**[Download Gestures 0.3.0 for Mac](https://github.com/Whitewashgrid927/gestures/releases/download/v0.3.0/Gestures-0.3.0-macOS-arm64.zip)** — Apple silicon, macOS 26 or newer. Unzip the download and move **Gestures.app** to **Applications**. No build tools are needed. The app is Developer ID signed and notarized by Apple. If updating, quit Gestures from its menu-bar menu before replacing the existing app; your saved gestures remain in place.
 
 [Release notes and checksums](https://github.com/Whitewashgrid927/gestures/releases/latest) · [Privacy](PRIVACY.md) · [Safety and security](SECURITY.md)
 
@@ -13,7 +13,7 @@ A native Mac prototype for defining your own camera-based hand gestures and assi
 - If you select a specific camera, it must be available when capture starts. Gestures asks you to reconnect it or choose another device instead of silently opening a different camera. **System default** remains available as an explicit choice.
 - Accessibility permission for keyboard, Space-switching, and scrolling actions. Test mode does not need that permission.
 
-This source builds version 0.3.0 with two-finger scrolling and a native Liquid Glass indicator. The download above is the published 0.2.3 release with pinch-and-slide app switching. A locally built app uses ad-hoc signing unless you supply an identity.
+Version 0.3.0 adds [two-finger scrolling](#two-finger-scrolling) with a native Liquid Glass indicator, alongside pinch-and-slide app switching and configurable Space gestures. Raise two fingers, move your hand to scroll, then relax your fingers to stop. A locally built app uses ad-hoc signing unless you supply an identity.
 
 ## First use
 
