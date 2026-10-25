@@ -78,10 +78,12 @@ final class VisionTracker {
     func detect(buffer: CVPixelBuffer, time: Double) throws -> HandFrame {
         let width = Double(CVPixelBufferGetWidth(buffer)), height = Double(CVPixelBufferGetHeight(buffer))
         try VNImageRequestHandler(cvPixelBuffer: buffer, orientation: .up).perform([request])
-        return .init(time: time, hands: (request.results ?? []).compactMap { HandGeometry.convert($0, width: width, height: height) }, width: width, height: height)
+        let observations = request.results ?? []
+        return .init(time: time, hands: observations.compactMap { HandGeometry.convert($0, width: width, height: height) }, width: width, height: height, detectedHands: observations.count)
     }
     func detect(image: CGImage, time: Double, mirrored: Bool = true) throws -> HandFrame {
         try VNImageRequestHandler(cgImage: image, orientation: .up).perform([request])
-        return .init(time: time, hands: (request.results ?? []).compactMap { HandGeometry.convert($0, width: Double(image.width), height: Double(image.height), mirrored: mirrored) }, width: Double(image.width), height: Double(image.height))
+        let observations = request.results ?? []
+        return .init(time: time, hands: observations.compactMap { HandGeometry.convert($0, width: Double(image.width), height: Double(image.height), mirrored: mirrored) }, width: Double(image.width), height: Double(image.height), detectedHands: observations.count)
     }
 }

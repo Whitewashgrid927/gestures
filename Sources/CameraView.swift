@@ -84,6 +84,10 @@ struct TestFeedback: View {
             if rule?.action.kind == .volume, !tracking.volumeStatus.isEmpty {
                 Text("Last volume check: \(tracking.volumeStatus)").font(.system(size: 11, weight: .medium)).foregroundStyle(.secondary)
             }
+            if rule?.action.kind == .volume {
+                Text(tracking.volumeRecognitionCheck.summary).font(.system(size: 11, weight: .medium)).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
         }.frame(maxWidth: .infinity).padding(12).liquidPanel(radius: 15)
     }
 }

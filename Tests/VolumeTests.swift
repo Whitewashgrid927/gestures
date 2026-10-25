@@ -54,6 +54,21 @@ extension GesturesTests {
                    "Measured fist geometry completes the stable-pose gate")
         }
         var rule = GestureRule.volumePreset
+        var diagnostic = VolumeRecognitionCheck()
+        diagnostic.observe(.init(time: 1, hands: [], detectedHands: 1), rule: rule, progress: .init(), accepted: false)
+        expect(diagnostic.summary.contains("palm could not be tracked"), "Diagnostic distinguishes a discarded palm from no Vision detection")
+        var partial = hand(pose: .fist); partial.fingers[.ring] = .extended; partial.confidence = 0.62
+        diagnostic.observe(.init(time: 2, hands: [partial]), rule: rule, progress: .init(), accepted: false)
+        let strongest = diagnostic.summary
+        diagnostic.observe(.init(time: 3, hands: [hand(pose: .open)]), rule: rule, progress: .init(), accepted: false)
+        diagnostic.observe(.init(time: 4, hands: []), rule: rule, progress: .init(), accepted: false)
+        expect(diagnostic.summary == strongest && strongest.contains("3/4 bent"), "Lowering or opening the hand does not overwrite the strongest fist diagnostic")
+        diagnostic.observe(.init(time: 5, hands: [hand(pose: .fist)]), rule: rule, progress: .init(fraction: 0.5), accepted: false)
+        expect(diagnostic.summary.contains("held 60/120 ms"), "Diagnostic reports the actual stability progress")
+        diagnostic.observe(.init(time: 6, hands: [hand(pose: .fist)]), rule: rule, progress: .init(fraction: 1), accepted: true)
+        expect(diagnostic.summary == "Fist recognition passed this attempt.", "Accepted recognition is reported independently of volume dispatch")
+        diagnostic = .init()
+        expect(diagnostic.summary.contains("no hand detected"), "Starting another attempt clears the in-memory diagnostic")
         expect(!rule.enabled && rule.steps.count == 1 && rule.steps[0].pose.kind == .fist, "Fist volume is opt-in with the existing brief pose stability gate")
         rule.enabled = true; _ = try rule.validated()
         let frame: (Double, Double) -> HandFrame = { time, y in .init(time: time, hands: [hand(0.5, y, pose: .fist)]) }

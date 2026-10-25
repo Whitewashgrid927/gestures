@@ -2,6 +2,49 @@ import AppKit
 import CoreAudio
 
 enum VolumeAxis: String, Codable, CaseIterable, Sendable { case vertical = "Up / down", horizontal = "Left / right" }
+
+/// Aggregate, in-memory feedback. No coordinates, images, timestamps, or device identifiers.
+struct VolumeRecognitionCheck: Equatable, Sendable {
+    private var sawObservation = false
+    private var sawTrackedHand = false
+    private var bent = -1
+    private var clear = 0
+    private var confidence = 0.0
+    private var minimum = 0.55
+    private var hold = 0.0
+    private var matched = false
+    mutating func observe(_ frame: HandFrame, rule: GestureRule, progress: RecognitionProgress, accepted: Bool) {
+        guard rule.action.kind == .volume else { return }
+        minimum = rule.confidence
+        sawObservation = sawObservation || (frame.detectedHands ?? frame.hands.count) > 0
+        sawTrackedHand = sawTrackedHand || !frame.hands.isEmpty
+        matched = matched || accepted
+        if rule.steps.indices.contains(progress.step), rule.steps[progress.step].kind == .pose,
+           rule.steps[progress.step].pose.kind == .fist, progress.fraction.isFinite,
+           frame.hands.contains(where: { $0.matches(.init(kind: .fist), hand: rule.hand, minimum: rule.confidence) }) {
+            hold = max(hold, min(1, max(0, progress.fraction)))
+        }
+        for hand in frame.hands where hand.confidence.isFinite {
+            var bends = 0; var clearBends = 0
+            for finger in [Finger.index, .middle, .ring, .little] where hand.fingers[finger] == .curled {
+                bends += 1
+                let prefix = finger.rawValue.lowercased()
+                let evidence = hand.curledEvidence[finger] ?? [prefix + "MCP", prefix + "PIP", prefix + "DIP", prefix + "Tip"]
+                if evidence.count >= 3 && evidence.allSatisfy({ hand.joints[$0].map { $0.confidence >= rule.confidence && $0.point.finite } == true }) { clearBends += 1 }
+            }
+            if bends > bent || (bends == bent && (clearBends > clear || (clearBends == clear && hand.confidence > confidence))) {
+                bent = bends; clear = clearBends; confidence = min(1, max(0, hand.confidence))
+            }
+        }
+    }
+    var summary: String {
+        if matched { return "Fist recognition passed this attempt." }
+        if !sawObservation { return "This attempt: no hand detected by the camera yet." }
+        if !sawTrackedHand { return "This attempt: a hand was seen, but its palm could not be tracked clearly." }
+        return "Best fist: \(max(0, bent))/4 bent · \(clear)/4 clear at \(Int((minimum * 100).rounded()))% · hand \(Int((confidence * 100).rounded()))% · held \(Int((hold * 120).rounded()))/120 ms"
+    }
+}
+
 struct VolumeSettings: Codable, Equatable, Sendable {
     var axis = VolumeAxis.vertical
     var sensitivity = 1.0

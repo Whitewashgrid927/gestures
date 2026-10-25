@@ -278,4 +278,5 @@ struct HandFrame: Sendable {
     var hands: [TrackedHand]
     var width: Double = 1280
     var height: Double = 720
+    var detectedHands: Int? = nil
 }

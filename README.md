@@ -44,6 +44,12 @@ required when the visible joints already prove the bend. Missing or uncertain be
 evidence still blocks recognition. The camera label identifies the finger to show
 and explicitly reports when the fist is seen. **Last volume check** distinguishes
 recognition guidance from an accepted gesture and a displayed indicator.
+The **Best fist** summary preserves the strongest attempt after you lower your
+hand: bent fingers, confidence-qualified fingers, hand confidence, and the longest
+recognized hold. It also distinguishes a Vision observation rejected during palm
+tracking from no hand observation. Restart Practice to clear it. This aggregate
+summary stays in memory; it does not retain images or landmark history and never
+changes recognition thresholds or bypasses a gate.
 **Preview indicator → Show floating indicator** tests the actual floating glass
 panel with synthetic input, without using the camera or changing sound.
 Enable **Use gesture** and **Mac control** when ready for actual volume changes.
