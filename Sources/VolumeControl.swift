@@ -13,12 +13,14 @@ struct VolumeRecognitionCheck: Equatable, Sendable {
     private var minimum = 0.55
     private var hold = 0.0
     private var matched = false
+    private var fullFistFrames = 0
     mutating func observe(_ frame: HandFrame, rule: GestureRule, progress: RecognitionProgress, accepted: Bool) {
         guard rule.action.kind == .volume else { return }
         minimum = rule.confidence
         sawObservation = sawObservation || (frame.detectedHands ?? frame.hands.count) > 0
         sawTrackedHand = sawTrackedHand || !frame.hands.isEmpty
         matched = matched || accepted
+        if frame.hands.count == 1, frame.hands[0].matches(.init(kind: .fist), hand: rule.hand, minimum: rule.confidence) { fullFistFrames += 1 }
         if rule.steps.indices.contains(progress.step), rule.steps[progress.step].kind == .pose,
            rule.steps[progress.step].pose.kind == .fist, progress.fraction.isFinite,
            frame.hands.contains(where: { $0.matches(.init(kind: .fist), hand: rule.hand, minimum: rule.confidence) }) {
@@ -41,7 +43,7 @@ struct VolumeRecognitionCheck: Equatable, Sendable {
         if matched { return "Fist recognition passed this attempt." }
         if !sawObservation { return "This attempt: no hand detected by the camera yet." }
         if !sawTrackedHand { return "This attempt: a hand was seen, but its palm could not be tracked clearly." }
-        return "Best fist: \(max(0, bent))/4 bent · \(clear)/4 clear at \(Int((minimum * 100).rounded()))% · hand \(Int((confidence * 100).rounded()))% · held \(Int((hold * 120).rounded()))/120 ms"
+        return "Best fist: \(max(0, bent))/4 bent · \(clear)/4 clear at \(Int((minimum * 100).rounded()))% · hand \(Int((confidence * 100).rounded()))% · held \(Int((hold * 120).rounded()))/120 ms · \(fullFistFrames) clear frames"
     }
 }
 

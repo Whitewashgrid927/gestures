@@ -41,11 +41,11 @@ hold the pose, then move up for louder or down for quieter. Open your hand to st
 Practice displays a simulated level and never reads or changes system volume.
 A fist requires four confidently measured finger bends; hidden fingertips are not
 required when the visible joints already prove the bend. Arming needs three fully
-confident fist observations spanning at least 120 ms. Brief uncertain observations
-may bridge a gap of at most 150 ms between confident observations; they cannot arm
-the gesture. A clearly opened finger resets that progress. During control, the same
-short uncertainty keeps the indicator visible with **Hold steady** and freezes
-volume. Confidence recovery discards movement made while paused. Longer uncertainty,
+confident fist observations spanning at least 120 ms within a 500 ms window.
+Uncertain observations cannot arm the gesture. A clearly opened finger resets that
+progress. During control, up to 350 ms since the last confident observation keeps
+the indicator visible with **Hold steady** and freezes volume. Confidence recovery
+discards movement made while paused. Longer uncertainty,
 a missing hand, a second hand, or an opened hand stops the session.
 The camera label identifies the finger to show
 and explicitly reports when the fist is seen. **Last volume check** distinguishes
@@ -56,6 +56,10 @@ recognized hold. It also distinguishes a Vision observation rejected during palm
 tracking from no hand observation. Restart Practice to clear it. This aggregate
 summary stays in memory; it does not retain images or landmark history and never
 changes recognition thresholds or bypasses a gate.
+When fist volume and Pinch & slide are both enabled for the same hand and app,
+three confidently curled fingers with the fourth uncertain block the app picker
+while the fist is being established. That partial pose cannot activate volume.
+For Pinch & slide, keep the other fingers open so the gestures are distinct.
 **Preview indicator → Show floating indicator** tests the actual floating glass
 panel with synthetic input, without using the camera or changing sound.
 Enable **Use gesture** and **Mac control** when ready for actual volume changes.

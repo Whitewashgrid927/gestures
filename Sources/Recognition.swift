@@ -9,19 +9,23 @@ struct RecognitionProgress: Sendable {
 }
 
 struct FistStability {
-    static let uncertaintyLimit = 0.15
+    // A closed fist naturally hides joints between confident observations. This
+    // window collects positive evidence; it never treats uncertainty as a match.
+    static let armingWindow = 0.5
+    static let uncertaintyLimit = 0.35
     private var first: Double?
     private var last: Double?
     private var samples = 0
     mutating func accept(at time: Double) -> (fraction: Double, complete: Bool) {
-        if let last, time <= last || time - last > Self.uncertaintyLimit { self = .init() }
+        if let last, time <= last || time - last > Self.armingWindow { self = .init() }
+        if let first, time - first > Self.armingWindow { self = .init() }
         if first == nil { first = time }
         last = time; samples += 1
         let fraction = min(1, max(0, (time - (first ?? time)) / 0.12))
         return (fraction, fraction >= 1 && samples >= 3)
     }
     mutating func uncertain(at time: Double) {
-        if let last, time - last > Self.uncertaintyLimit { self = .init() }
+        if let last, time - last > Self.armingWindow { self = .init() }
     }
 }
 
@@ -222,12 +226,13 @@ struct RecognitionCoordinator {
             .sorted { !$0.scope.isGlobal && $1.scope.isGlobal }
         let allowedIDs = Set(eligible.map(\.id)); recognizers = recognizers.filter { allowedIDs.contains($0.key) }
         var candidates: [(GestureRule, RecognitionProgress)] = []
-        // A closed fist can also bring thumb and index together. Give an enabled fist
-        // volume rule precedence over the less-specific opening pinch, without changing saved poses.
+        // Partial fist evidence may block a competing pinch, but cannot authorize
+        // volume. Otherwise one occluded finger can open the picker mid-fist.
         let fistVolume = eligible.contains { rule in
             rule.action.kind == .volume && rule.steps.first?.pose.kind == .fist &&
             (!rule.requireOptionKey || optionHeld) && frame.hands.count == 1 &&
-            frame.hands[0].matches(rule.steps[0].pose, hand: rule.hand, minimum: rule.confidence)
+            (frame.detectedHands ?? frame.hands.count) == 1 &&
+            frame.hands[0].isFistCandidate(hand: rule.hand, minimum: rule.confidence)
         }
         for rule in eligible {
             if fistVolume && rule.action.kind == .switchApps { recognizers[rule.id] = nil; continue }

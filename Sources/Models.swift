@@ -286,6 +286,20 @@ struct TrackedHand: Sendable, Equatable {
         }
         return true
     }
+    /// Arbitration only: a partially occluded fist must not fall through to pinch.
+    /// Starting or moving volume still requires the complete configured fist pose.
+    func isFistCandidate(hand: HandChoice, minimum: Double) -> Bool {
+        guard matches(.init(kind: .any), hand: hand, minimum: minimum) else { return false }
+        if matches(.init(kind: .fist), hand: hand, minimum: minimum) { return true }
+        guard fistIsUncertain(hand: hand, minimum: minimum) else { return false }
+        let visibleBends = [Finger.index, .middle, .ring, .little].filter { finger in
+            guard fingers[finger] == .curled else { return false }
+            let prefix = finger.rawValue.lowercased()
+            let names = curledEvidence[finger] ?? [prefix + "MCP", prefix + "PIP", prefix + "DIP", prefix + "Tip"]
+            return names.count >= 3 && names.allSatisfy { joints[$0].map { $0.confidence >= minimum && $0.point.finite } == true }
+        }
+        return visibleBends.count >= 3
+    }
 }
 struct HandFrame: Sendable {
     var time: Double

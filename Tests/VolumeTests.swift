@@ -80,8 +80,12 @@ extension GesturesTests {
         expect(matches(flicker, rule: rule) == 1, "Three confident fist observations arm across brief finger-confidence flicker")
         expect(matches([frame(1, 0.5), weakFrame(1.05), weakFrame(1.1), frame(1.14, 0.5)], rule: rule) == 0,
                "Uncertain observations cannot replace the three positive fist observations")
-        expect(matches([frame(1, 0.5), weakFrame(1.1), weakFrame(1.2), frame(1.22, 0.5), frame(1.27, 0.5)], rule: rule) == 0,
-               "An uncertainty gap beyond 150 ms resets fist arming")
+        expect(matches([frame(1, 0.5), weakFrame(1.07), weakFrame(1.14), frame(1.2, 0.5), weakFrame(1.27), frame(1.4, 0.5)], rule: rule) == 1,
+               "Three fully confident fists within half a second arm despite intermittent joint occlusion")
+        expect(matches([frame(1, 0.5), weakFrame(1.2), weakFrame(1.4), weakFrame(1.51), frame(1.55, 0.5), frame(1.62, 0.5)], rule: rule) == 0,
+               "Expired positive fist evidence cannot arm a later attempt")
+        expect(matches([frame(1, 0.5), weakFrame(1.2), frame(1.4, 0.5), weakFrame(1.55), frame(1.65, 0.5)], rule: rule) == 0,
+               "All three positive observations must fit within the bounded arming window")
         var opened = hand(0.5, 0.5, pose: .fist); opened.fingers[.index] = .extended
         expect(matches([frame(1, 0.5), frame(1.06, 0.5), .init(time: 1.1, hands: [opened]), frame(1.14, 0.5)], rule: rule) == 0,
                "One confidently opened finger resets fist arming")
@@ -122,15 +126,16 @@ extension GesturesTests {
         expect(paused.volume == 0 && engine.continuousRule != nil && engine.continuousNeedsConfidence,
                "Brief finger uncertainty freezes volume while retaining the indicator")
         let deadline = engine.continuousConfidenceDeadline
-        expect(deadline.map { abs($0 - 1.28) < 1e-9 } == true, "Uncertainty deadline is bounded from the last confident observation")
+        expect(deadline.map { abs($0 - 1.48) < 1e-9 } == true, "Uncertainty deadline is bounded from the last confident observation")
         let stillPaused = engine.process(weakFrame(1.23, 0.54), rules: [rule], selected: rule.id, app: "test", optionHeld: false)
         expect(stillPaused.volume == 0 && engine.continuousConfidenceDeadline == deadline, "Repeated weak observations cannot extend the pause deadline")
         let recovered = engine.process(frame(1.26, 0.56), rules: [rule], selected: rule.id, app: "test", optionHeld: false)
         expect(recovered.volume == 0 && !engine.continuousNeedsConfidence, "Recovery discards movement made while confidence was low")
         expect(engine.process(frame(1.3, 0.56), rules: [rule], selected: rule.id, app: "test", optionHeld: false).volume == 0, "Recovery has no delayed movement tail")
         expect((engine.process(frame(1.34, 0.58), rules: [rule], selected: rule.id, app: "test", optionHeld: false).volume ?? 0) > 0, "New confident movement resumes volume control")
-        for input in [weakFrame(1.29, 0.54), frame(1.29, 0.54)] {
+        for input in [weakFrame(1.49, 0.54), frame(1.49, 0.54)] {
             engine = armed(); _ = engine.process(weakFrame(1.18, 0.52), rules: [rule], selected: rule.id, app: "test", optionHeld: false)
+            _ = engine.process(weakFrame(1.33, 0.53), rules: [rule], selected: rule.id, app: "test", optionHeld: false)
             let expired = engine.process(input, rules: [rule], selected: rule.id, app: "test", optionHeld: false)
             expect(expired.volume == nil && engine.continuousRule == nil, "Expired uncertainty stops even when a clear frame arrives late")
         }
@@ -149,6 +154,27 @@ extension GesturesTests {
         var priority = RecognitionCoordinator(); var winner: ActionKind?
         for time in [1.0, 1.06, 1.13] { winner = priority.process(.init(time: time, hands: [closed]), rules: [pinch, rule], selected: rule.id, app: "test", optionHeld: false).match?.rule.action.kind ?? winner }
         expect(winner == .volume, "A fist with touching thumb/index does not open the pinch picker")
+        var partialFist = closed; partialFist.joints["ringTip"]?.confidence = 0.1
+        priority.reset(); winner = nil
+        for time in [1.0, 1.06, 1.13, 1.2, 1.27] {
+            winner = priority.process(.init(time: time, hands: [partialFist]), rules: [pinch, rule], selected: rule.id, app: "test", optionHeld: false).match?.rule.action.kind ?? winner
+        }
+        expect(winner == nil && priority.continuousRule == nil, "A partially occluded fist authorizes neither volume nor a competing pinch picker")
+        for time in [1.33, 1.4, 1.47] {
+            winner = priority.process(.init(time: time, hands: [closed]), rules: [pinch, rule], selected: rule.id, app: "test", optionHeld: false).match?.rule.action.kind ?? winner
+        }
+        expect(winner == .volume, "A fist can finish arming after occlusion without the picker stealing the gesture")
+        priority.reset(); winner = nil
+        for time in [1.0, 1.06, 1.13] {
+            winner = priority.process(.init(time: time, hands: [hand(pose: .pinch)]), rules: [pinch, rule], selected: pinch.id, app: "test", optionHeld: false).match?.rule.action.kind ?? winner
+        }
+        expect(winner == .switchApps, "An ordinary pinch with open other fingers still opens the picker alongside volume")
+        var ineligible = rule; ineligible.hand = .left
+        priority.reset(); winner = nil
+        for time in [1.0, 1.06, 1.13] {
+            winner = priority.process(.init(time: time, hands: [partialFist]), rules: [pinch, ineligible], selected: pinch.id, app: "test", optionHeld: false).match?.rule.action.kind ?? winner
+        }
+        expect(winner == .switchApps, "A volume gesture for a different hand cannot suppress a valid pinch")
         rule.enabled = false; priority.reset(); winner = nil
         for time in [1.0, 1.06, 1.13] { winner = priority.process(.init(time: time, hands: [closed]), rules: [pinch, rule], selected: pinch.id, app: "test", optionHeld: false).match?.rule.action.kind ?? winner }
         expect(winner == .switchApps, "A disabled volume preset cannot change existing pinch recognition"); rule.enabled = true
