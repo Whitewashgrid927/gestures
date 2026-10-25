@@ -27,6 +27,12 @@ personal gesture exports, or other private data in public issues.
   dispatch rechecks the saved rule, current app, permissions, and target process identity.
 - Shortcut execution uses a fixed executable and argument array, never a shell.
   It remains single-flight with a timeout. Already-executed Shortcut work cannot be undone.
+- Continuous scrolling accepts exactly one confident matching hand, preserves known
+  hand identity across unknown observations, and stops on ambiguity, discontinuity,
+  stale frames, foreground/Space changes, or released gates. Motion is bounded and
+  never queued for later playback. The glass indicator is click-through and cannot
+  take focus. Disabling its visibility does not disable any input checks. Practice
+  may display scrolling feedback but cannot post scroll events.
 
 ## Scope and limits
 

@@ -194,11 +194,15 @@ final class ActionRunner {
         if accepted { lastAction = now }
         return accepted
     }
-    func scroll(_ delta: Point2, rule: GestureRule, permission: DispatchPermission) {
-        guard permission.allows(rule), rule.action.kind.isContinuous, !Self.secureInput, Self.hasAccess, delta.finite else { return }
+    @discardableResult
+    func scroll(_ delta: Point2, rule: GestureRule, permission: DispatchPermission) -> Bool {
+        guard permission.allows(rule), rule.action.kind.isContinuous, !Self.secureInput, Self.hasAccess, delta.finite,
+              NSWorkspace.shared.frontmostApplication?.bundleIdentifier == permission.frontApp else { return false }
         let x = Int32(max(-45, min(45, delta.x)).rounded()), y = Int32(max(-45, min(45, delta.y)).rounded())
-        guard x != 0 || y != 0, let event = CGEvent(scrollWheelEvent2Source: nil, units: .pixel, wheelCount: 2, wheel1: y, wheel2: x, wheel3: 0) else { return }
+        if x == 0 && y == 0 { return true }
+        guard let event = CGEvent(scrollWheelEvent2Source: nil, units: .pixel, wheelCount: 2, wheel1: y, wheel2: x, wheel3: 0) else { return false }
         event.post(tap: .cghidEventTap)
+        return true
     }
     private func postKey(_ event: CGEvent) {
         event.timestamp = DispatchTime.now().uptimeNanoseconds

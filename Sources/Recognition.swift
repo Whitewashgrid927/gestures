@@ -100,6 +100,7 @@ struct CoordinatorResult: Sendable {
     var match: GestureMatch?
     var scroll: Point2?
     var scrollRule: GestureRule?
+    var scrollFeedback: ScrollFeedback?
 }
 struct RecognitionCoordinator {
     private var recognizers: [UUID: GestureRecognizer] = [:]
@@ -107,11 +108,15 @@ struct RecognitionCoordinator {
     private var neutralRule: GestureRule?
     private var neutralSince: Double?
     private var activeScope = ""
-    private var continuous: (rule: GestureRule, pose: PoseDefinition, hand: TrackedHand, time: Double)?
+    private var continuous: ContinuousScrollSession?
     private var continuousAccepted = false
+    var continuousRule: GestureRule? { continuous?.rule }
     mutating func resolveAction(_ rule: GestureRule, accepted: Bool) {
         guard let active = continuous, active.rule == rule else { return }
-        if accepted { continuousAccepted = true }
+        if accepted {
+            continuousAccepted = true
+            continuous?.motion = .init(origin: active.hand.palm)
+        }
         else {
             continuous = nil; continuousAccepted = false
             if active.rule.requireNeutral { neutralRule = active.rule; neutralSince = nil }
@@ -119,6 +124,12 @@ struct RecognitionCoordinator {
     }
     mutating func cancelPendingAction() {
         if let active = continuous, !continuousAccepted { resolveAction(active.rule, accepted: false) }
+    }
+    mutating func stopContinuous(at time: Double) {
+        guard let active = continuous else { return }
+        continuous = nil; continuousAccepted = false; recognizers.removeAll()
+        cooldownUntil = max(cooldownUntil, (time.isFinite ? time : active.time) + active.rule.cooldown)
+        if active.rule.requireNeutral { neutralRule = active.rule; neutralSince = nil }
     }
     mutating func reset() { self = Self() }
     mutating func finishInteractiveAction(_ rule: GestureRule, at time: Double) {
@@ -140,28 +151,20 @@ struct RecognitionCoordinator {
         guard frame.time.isFinite else { reset(); return .init() }
         if app != activeScope { activeAppChanged(to: app, at: frame.time) }
         var result = CoordinatorResult()
-        if let active = continuous {
-            let candidate = frame.hands.filter { $0.matches(active.pose, hand: active.rule.hand, minimum: active.rule.confidence) && (active.hand.side == .either || $0.side == active.hand.side) }
-                .min(by: { ($0.palm - active.hand.palm).length < ($1.palm - active.hand.palm).length })
-            guard let hand = candidate, frame.time > active.time, frame.time - active.time <= 0.25,
-                  (!active.rule.requireOptionKey || optionHeld), rules.contains(where: { $0 == active.rule && $0.enabled && ($0.scope.isGlobal || $0.scope.bundleID == app) }),
-                  (hand.palm - active.hand.palm).length < 0.15 else {
-                continuous = nil; cooldownUntil = frame.time + active.rule.cooldown
-                if active.rule.requireNeutral { neutralRule = active.rule }
+        if var active = continuous {
+            guard (!active.rule.requireOptionKey || optionHeld),
+                  rules.contains(where: { $0 == active.rule && $0.enabled && ($0.scope.isGlobal || $0.scope.bundleID == app) }),
+                  let pixels = active.sample(frame) else {
+                stopContinuous(at: frame.time)
                 result.progress.message = "Scrolling stopped"; return result
             }
-            let delta = hand.palm - active.hand.palm
-            let sign = active.rule.action.reverseScroll ? -1.0 : 1.0
-            let gain = 1700 * active.rule.action.scrollSensitivity * sign
-            let cap = min(45, (frame.time - active.time) * 700)
-            let amount = active.rule.action.kind == .scrollVertical ? delta.y * gain : delta.x * gain
-            let pixels = max(-cap, min(cap, amount))
             if continuousAccepted {
                 result.scroll = active.rule.action.kind == .scrollVertical ? .init(x: 0, y: pixels) : .init(x: pixels, y: 0)
                 result.scrollRule = active.rule
             }
-            result.progress = .init(step: active.rule.steps.count - 1, fraction: 1, message: continuousAccepted ? "Move to scroll · release to stop" : "Preparing scroll…", hand: hand)
-            continuous = (active.rule, active.pose, hand, frame.time)
+            result.scrollFeedback = .init(action: active.rule.action, amount: continuousAccepted ? pixels : 0, preparing: !continuousAccepted)
+            result.progress = .init(step: active.rule.steps.count - 1, fraction: 1, message: continuousAccepted ? "Move to scroll · release to stop" : "Preparing scroll…", hand: active.hand)
+            continuous = active
             return result
         }
         if let neutralRule {
@@ -177,6 +180,11 @@ struct RecognitionCoordinator {
         let allowedIDs = Set(eligible.map(\.id)); recognizers = recognizers.filter { allowedIDs.contains($0.key) }
         var candidates: [(GestureRule, RecognitionProgress)] = []
         for rule in eligible {
+            if rule.action.kind.isContinuous && frame.hands.count != 1 {
+                recognizers[rule.id] = nil
+                if rule.id == selected { result.progress.message = "Show one clear hand to scroll" }
+                continue
+            }
             if rule.requireOptionKey && !optionHeld { recognizers[rule.id] = nil; if rule.id == selected { result.progress.message = "Hold Option to use this gesture" }; continue }
             var recognizer = recognizers[rule.id] ?? GestureRecognizer()
             let progress = recognizer.process(frame, rule: rule)
@@ -188,9 +196,9 @@ struct RecognitionCoordinator {
             result.match = .init(rule: rule, hand: progress.hand); result.progress = progress
             recognizers.removeAll(); cooldownUntil = frame.time + rule.cooldown
             if rule.action.kind.isContinuous, let hand = progress.hand {
-                let pose = rule.steps.last(where: { $0.kind == .pose })?.pose ?? .init()
-                continuous = (rule, pose, hand, frame.time)
+                continuous = .init(rule: rule, hand: hand, time: frame.time)
                 continuousAccepted = false
+                result.scrollFeedback = .init(action: rule.action, amount: 0, preparing: true)
             } else if rule.requireNeutral { neutralRule = rule }
         }
         return result

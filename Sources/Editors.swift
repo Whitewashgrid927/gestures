@@ -172,7 +172,10 @@ struct GestureEditor: View {
                     VStack(alignment: .leading, spacing: 19) {
                         settingSlider("Scroll sensitivity", value: $rule.action.scrollSensitivity, range: 0.25...3, display: String(format: "%.2f×", rule.action.scrollSensitivity))
                         Toggle("Reverse scroll direction", isOn: $rule.action.reverseScroll)
-                        Text("After the sequence matches, move your hand while holding its final pose. Releasing the pose or losing tracking stops scrolling. Use a pose followed by a short hold; leave out a Release step.").font(.system(size: 12)).foregroundStyle(.secondary).lineSpacing(4)
+                        settingSlider("Steadiness", value: Binding(get: { rule.action.scrollSettings.jitterTolerance }, set: { var value = rule.action.scrollSettings; value.jitterTolerance = $0; rule.action.scrolling = value }), range: 0...0.015, display: String(format: "%.1f%%", rule.action.scrollSettings.jitterTolerance * 100))
+                        Toggle("Show Liquid Glass indicator", isOn: Binding(get: { rule.action.scrollSettings.showIndicator }, set: { var value = rule.action.scrollSettings; value.showIndicator = $0; rule.action.scrolling = value }))
+                        Button("Use two-finger sequence") { rule.steps = GestureRule.twoFingerScrollPreset.steps; rule.action.scrolling = rule.action.scrolling ?? .init(); selectedStep = rule.steps.first?.id }
+                        Text("Raise index and middle fingers, keeping the others curled. Move to scroll; relax your fingers or lower your hand to stop. Steadiness filters small tremors without adding momentum. Choose Vertical or Horizontal scroll above; configure your hand in Gesture and app scope in Where.").font(.system(size: 12)).foregroundStyle(.secondary).lineSpacing(4)
                     }
                 default:
                     Label(rule.action.kind == .nextSpace || rule.action.kind == .previousSpace ? "Uses the Mac’s Control–Arrow shortcut. Keep that shortcut enabled in Keyboard settings." : "Uses the standard Mission Control keyboard shortcut.", systemImage: "keyboard").font(.system(size: 12)).foregroundStyle(.secondary).padding(18).liquidPanel()

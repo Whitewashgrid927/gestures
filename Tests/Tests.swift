@@ -81,6 +81,7 @@ struct GesturesTests {
     }
     static func main() throws {
         try appSwitchingChecks()
+        try scrollingChecks()
         let rule = GestureRule.examples[0]
         _ = try GestureLibrary().validated()
         expect(matches(swipeFrames(), rule: rule) == 1, "A deliberate left swipe completes once")
@@ -147,7 +148,8 @@ struct GesturesTests {
         c.reset(); var clutch = poseOnly; clutch.requireOptionKey = true
         expect((0..<10).allSatisfy { c.process(.init(time: 1 + Double($0)*0.05, hands: [hand()]), rules: [clutch], selected: clutch.id, app: "test", optionHeld: false).match == nil }, "Option clutch blocks recognition while released")
         expect((0..<10).contains { c.process(.init(time: 2 + Double($0)*0.05, hands: [hand()]), rules: [clutch], selected: clutch.id, app: "test", optionHeld: true).match != nil }, "Holding Option allows the configured gesture")
-        c.reset(); var scroll = GestureRule.examples[2]; scroll.enabled = true
+        c.reset(); var scroll = GestureRule(name: "Legacy pinch scroll")
+        scroll.steps = [.init(kind: .pose, pose: .init(kind: .pinch)), .init(kind: .hold, duration: 0.2)]; scroll.action.kind = .scrollVertical
         var scrollStarted = false
         for i in 0..<15 { let result = c.process(.init(time: 1 + Double(i)*0.05, hands: [hand(pose: .pinch)]), rules: [scroll], selected: scroll.id, app: "test", optionHeld: false); scrollStarted = scrollStarted || result.match != nil }
         expect(scrollStarted, "Pinch-and-hold begins continuous scrolling")

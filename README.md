@@ -13,7 +13,7 @@ A native Mac prototype for defining your own camera-based hand gestures and assi
 - If you select a specific camera, it must be available when capture starts. Gestures asks you to reconnect it or choose another device instead of silently opening a different camera. **System default** remains available as an explicit choice.
 - Accessibility permission for keyboard, Space-switching, and scrolling actions. Test mode does not need that permission.
 
-Version 0.2.3 includes the persistent pinch-and-slide app picker: pinch to open, release and move your hand to choose an app, then pinch again to confirm. See [Pinch & slide to switch apps](#pinch--slide-to-switch-apps) for setup and configuration. A locally built app uses ad-hoc signing unless you supply an identity.
+This source builds version 0.3.0 with two-finger scrolling and a native Liquid Glass indicator. The download above is the published 0.2.3 release with pinch-and-slide app switching. A locally built app uses ad-hoc signing unless you supply an identity.
 
 ## First use
 
@@ -32,6 +32,38 @@ Start the camera and enable **Mac control**, then choose **Run in background** o
 Use the hand icon in the macOS menu bar to pause or resume Mac control, stop the camera, reopen the configuration window, or quit. The menu also shows the latest completed gesture/action when available. Pausing stops actions while retaining the camera; **Stop camera** stops both. Quitting releases any pending synthetic keys and stops the camera.
 
 Closing the window during preview or practice, with Mac control off, still stops the camera. Background operation does not start capture on launch or bypass sleep, screen-lock, protected-input, camera-health, or permission checks. Live control holds a process-activity token so the app can keep recognizing gestures with its window closed; that token allows normal idle system sleep and ends when control stops.
+
+## Two-finger scrolling
+
+Choose **Two-finger scroll** in the sidebar to add or select the disabled preset.
+Start the camera and try **Practice only** first. Raise your index and middle fingers,
+curl your ring and little fingers, and keep thumb and index apart. After the existing
+120 ms stable-pose check, move your hand up or down to scroll. Stop moving to stop
+the page; relax your fingers or lower the hand to disengage. The default sequence
+does not add a separate Hold step. Pinching is reserved for the app picker.
+
+The native Liquid Glass indicator appears at the edge of the display containing the
+pointer. It shows **Preparing**, **Ready**, or the scroll direction; Practice is clearly
+labelled and never sends events. Its dot follows scroll intensity without animation
+lag. The panel cannot take focus or intercept clicks, and it requires no screen capture.
+**Preview indicator** provides a synthetic preview without using the camera.
+
+**Edit gesture → Action** configures sensitivity, reversed direction, steadiness,
+indicator visibility, and **Vertical scroll** or **Horizontal scroll**. Steadiness
+absorbs small tremors without adding inertia. **Gesture** chooses the hand and starting
+sequence; **Where** sets app scope. **Fine-tune** retains confidence, cooldown,
+neutral-hand rearming, and the optional hold-Option clutch. Enable **Use gesture** and
+then **Mac control** when ready. Existing definitions are preserved; the preset button
+does not replace an existing configured two-finger scroll rule.
+
+Each scrolling frame requires exactly one matching, confident, continuous hand.
+Releasing the pose, a second hand, uncertain required fingertips, a real hand swap,
+an excessive tracking jump, or a frame gap over 250 ms ends the session. Temporary
+unknown handedness cannot erase the last known side. App/Space changes, edits,
+sleep/lock, lost permission, protected input, and the Option clutch also stop input.
+Cooldown and neutral rearming remain required. Scrolling has no momentum or queued
+movement after stopping. The optional desktop ripple runs once before acceptance;
+movement during that prelude is discarded, and release cancels pending scrolling.
 
 ## Pinch & slide to switch apps
 

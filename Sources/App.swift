@@ -26,6 +26,7 @@ struct GesturesApp: App {
             CommandGroup(replacing: .newItem) {
                 Button("New gesture") { store.newGesture() }.keyboardShortcut("n")
                 Button("Pinch & slide preset") { store.addAppSwitcherPreset() }
+                Button("Two-finger scroll preset") { store.addTwoFingerScrollPreset() }
             }
             CommandGroup(replacing: .undoRedo) {
                 Button("Undo gesture change") { store.undo() }.keyboardShortcut("z").disabled(!store.canUndo || store.isEditing)

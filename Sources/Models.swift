@@ -32,7 +32,7 @@ struct PoseDefinition: Codable, Equatable, Sendable {
         default: return .any
         }
     }
-    var pinchRequirement: PinchRequirement { kind == .pinch ? .touching : kind == .custom ? pinch : .any }
+    var pinchRequirement: PinchRequirement { kind == .pinch ? .touching : kind == .victory ? .apart : kind == .custom ? pinch : .any }
     var label: String { kind.rawValue }
 }
 
@@ -113,6 +113,9 @@ struct GestureAction: Codable, Equatable, Sendable {
     var shortcutName = ""
     var scrollSensitivity: Double = 1
     var reverseScroll = false
+    var scrolling: ScrollSettings?
+    // Preserve the movement response of libraries saved before two-finger scrolling.
+    var scrollSettings: ScrollSettings { scrolling ?? .init(jitterTolerance: 0) }
     // Optional for libraries saved before app switching was introduced.
     var appSwitcher: AppSwitcherSettings?
     var switcherSettings: AppSwitcherSettings { appSwitcher ?? .init() }
@@ -154,6 +157,7 @@ struct GestureRule: Identifiable, Codable, Equatable, Sendable {
         }
         if action.kind.isContinuous && steps.contains(where: { $0.kind == .release }) { throw GestureError("Continuous scrolling stops when you release the final pose. Remove the Release step.") }
         if let settings = action.appSwitcher { _ = try settings.validated() }
+        if let settings = action.scrolling { _ = try settings.validated() }
         if action.kind == .switchApps {
             _ = try action.switcherSettings.validated()
             guard steps.last(where: { $0.kind == .pose })?.pose.pinchRequirement == .touching,
@@ -170,9 +174,14 @@ struct GestureRule: Identifiable, Codable, Equatable, Sendable {
     static var examples: [Self] {
         var left = Self(name: "Swipe left")
         var right = Self(name: "Swipe right"); right.steps[2].direction = .right; right.action.kind = .previousSpace
-        var scroll = Self(name: "Pinch & scroll"); scroll.steps = [.init(kind: .pose, pose: .init(kind: .pinch)), .init(kind: .hold, duration: 0.2)]; scroll.action.kind = .scrollVertical; scroll.enabled = false
         left.action.kind = .nextSpace
-        return [left, right, scroll, appSwitcherPreset]
+        return [left, right, twoFingerScrollPreset, appSwitcherPreset]
+    }
+    static var twoFingerScrollPreset: Self {
+        var rule = Self(name: "Two-finger scroll", enabled: false)
+        rule.steps = [.init(kind: .pose, pose: .init(kind: .victory))]
+        rule.action.kind = .scrollVertical; rule.action.scrolling = .init()
+        return rule
     }
     static var appSwitcherPreset: Self {
         var rule = Self(name: "Pinch & slide", enabled: false)

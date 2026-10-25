@@ -32,6 +32,7 @@ struct MainView: View {
         .sheet(isPresented: $store.showHelp) { HelpSheet() }
         .sheet(isPresented: $store.showGlassAppearance) { GlassAppearanceSheet(store: store) }
         .sheet(isPresented: $store.showAppSwitcherPreview) { AppSwitcherPreviewSheet() }
+        .sheet(isPresented: $store.showScrollPreview) { ScrollIndicatorPreviewSheet() }
         .alert("Something needs attention", isPresented: Binding(get: { store.errorMessage != nil }, set: { if !$0 { store.errorMessage = nil } })) { Button("OK") { store.errorMessage = nil } } message: { Text(store.errorMessage ?? "") }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in store.refreshPermissions() }
     }
@@ -68,6 +69,7 @@ struct MainView: View {
             Divider().padding(.horizontal, 25).padding(.vertical, 16)
             Button { store.newGesture() } label: { Label("New gesture", systemImage: "plus.circle").font(.system(size: 13)).frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 26).padding(.vertical, 7) }.buttonStyle(.plain)
             Button { store.addAppSwitcherPreset() } label: { Label("Pinch & slide", systemImage: "hand.pinch").font(.system(size: 12)).frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 26).padding(.vertical, 7) }.buttonStyle(.plain).help("Add or select the configurable app switcher")
+            Button { store.addTwoFingerScrollPreset() } label: { Label("Two-finger scroll", systemImage: "arrow.up.and.down").font(.system(size: 12)).frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 26).padding(.vertical, 7) }.buttonStyle(.plain).help("Add or select configurable two-finger scrolling")
             Spacer(minLength: 24)
             Menu {
                 Button("All profiles") { store.selectProfile("*") }
@@ -142,6 +144,9 @@ struct MainView: View {
             Button { store.showGlassAppearance = true } label: { Label("Ripple", systemImage: "drop").font(.system(size: 12)) }.buttonStyle(.plain).help("Preview and configure the desktop ripple")
             if store.selected?.action.kind == .switchApps {
                 Button("Preview picker") { store.showAppSwitcherPreview = true }.buttonStyle(.plain).font(.system(size: 12))
+            }
+            if store.selected?.action.kind.isContinuous == true {
+                Button("Preview indicator") { store.showScrollPreview = true }.buttonStyle(.plain).font(.system(size: 12))
             }
             Spacer()
             Menu {
