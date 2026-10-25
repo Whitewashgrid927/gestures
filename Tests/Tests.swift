@@ -80,6 +80,7 @@ struct GesturesTests {
         }
     }
     static func main() throws {
+        try appSwitchingChecks()
         let rule = GestureRule.examples[0]
         _ = try GestureLibrary().validated()
         expect(matches(swipeFrames(), rule: rule) == 1, "A deliberate left swipe completes once")
@@ -242,8 +243,8 @@ struct GesturesTests {
         let restored = try LibraryIO.load(file)
         expect(restored == original, "JSON round-trip preserves definitions and actions")
         let imported = try LibraryIO.merging(original, into: original)
-        expect(imported.rules.count == 6 && imported.rules.suffix(3).allSatisfy { !$0.enabled }, "All imported gestures are disabled")
-        expect(Set(imported.rules.map(\.id)).count == 6, "Import remaps IDs to prevent overwriting existing rules")
+        expect(imported.rules.count == original.rules.count * 2 && imported.rules.suffix(original.rules.count).allSatisfy { !$0.enabled }, "All imported gestures are disabled")
+        expect(Set(imported.rules.map(\.id)).count == original.rules.count * 2, "Import remaps IDs to prevent overwriting existing rules")
         var misleading = rule
         misleading.action.kind = .keyboard
         misleading.action.key = .init(code: 51, label: "Space", command: true, control: false)

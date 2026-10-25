@@ -108,10 +108,12 @@ struct GestureEditor: View {
                 settingSlider("Duration", value: step.duration, range: 0.1...3, display: "\(Int(step.wrappedValue.duration * 1000)) ms")
                 Text("Keep the preceding hand pose still for this long. Moving too far restarts the hold.").font(.system(size: 12)).foregroundStyle(.secondary)
             }
-        case .move:
+        case .move, .slide:
             VStack(alignment: .leading, spacing: 20) {
                 Text("Define the movement").font(.system(size: 18, weight: .medium, design: .rounded))
-                Picker("Direction", selection: step.direction) { ForEach(MoveDirection.allCases, id: \.self) { Label($0.rawValue, systemImage: $0.symbol).tag($0) } }
+                if step.wrappedValue.kind == .move {
+                    Picker("Direction", selection: step.direction) { ForEach(MoveDirection.allCases, id: \.self) { Label($0.rawValue, systemImage: $0.symbol).tag($0) } }
+                } else { Text("Either left or right opens the picker. Vertical movement does not complete this step.").font(.system(size: 12)).foregroundStyle(.secondary) }
                 settingSlider("Travel distance", value: step.distance, range: 0.03...0.65, display: "\(Int(step.wrappedValue.distance * 100))% of frame")
                 settingSlider("Complete within", value: step.maximumDuration, range: 0.2...5, display: String(format: "%.1f seconds", step.wrappedValue.maximumDuration))
                 Text("Keep the preceding pose while moving. Directions match the mirrored preview. Chain several Move steps to define a path.").font(.system(size: 12)).foregroundStyle(.secondary).lineSpacing(4)
@@ -142,6 +144,9 @@ struct GestureEditor: View {
                 Text("What should happen?").font(.system(size: 19, weight: .medium, design: .rounded))
                 Picker("Action", selection: $rule.action.kind) { ForEach(ActionKind.allCases, id: \.self) { Text($0.rawValue).tag($0) } }.frame(maxWidth: 530)
                 switch rule.action.kind {
+                case .switchApps:
+                    AppSwitcherSettingsView(settings: Binding(get: { rule.action.switcherSettings }, set: { rule.action.appSwitcher = $0 }))
+                    Button("Use pinch & slide sequence") { rule.steps = GestureRule.appSwitcherPreset.steps; selectedStep = rule.steps.first?.id }
                 case .keyboard:
                     VStack(alignment: .leading, spacing: 12) {
                         Text("Your keyboard shortcut").font(.system(size: 12, weight: .medium))

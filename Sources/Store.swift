@@ -34,6 +34,9 @@ final class GestureStore: ObservableObject {
         didSet { if showGlassAppearance { disableControl(); testing = false } }
     }
     @Published var showPermissions = false
+    @Published var showAppSwitcherPreview = false {
+        didSet { if showAppSwitcherPreview { disableControl(); testing = false } }
+    }
     @Published var errorMessage: String?
     @Published var notice = "Make a gesture your own."
     @Published var accessible = ActionRunner.hasAccess
@@ -56,6 +59,11 @@ final class GestureStore: ObservableObject {
     @Published private(set) var screenRippleReady = false
     @Published private(set) var preActionPending = false
     private var preActionID = UUID()
+    private let appPicker = AppPickerController()
+    private var appSwitch: AppSwitchSession?
+    private var appSwitchWatchdog: Task<Void, Never>?
+    private var expectedApp: AppSwitchTarget?
+    private var appActivationTimeout: Task<Void, Never>?
     private var coordinator = RecognitionCoordinator()
     private var history: [GestureLibrary] = []
     private var redoHistory: [GestureLibrary] = []
@@ -85,7 +93,7 @@ final class GestureStore: ObservableObject {
         var seen: Set<String> = []
         return library.rules.map(\.scope).filter { !$0.isGlobal && seen.insert($0.bundleID).inserted }.sorted { $0.display < $1.display }
     }
-    var isEditing: Bool { editor != nil || showFineTune || showGlassAppearance }
+    var isEditing: Bool { editor != nil || showFineTune || showGlassAppearance || showAppSwitcherPreview }
     var cameraRunning: Bool { cameraStatus == .running }
     var controlMode: ControlMode { .resolve(cameraRunning: cameraRunning, enabled: enabled, testing: testing) }
     var canCheckSpace: Bool {
@@ -122,9 +130,13 @@ final class GestureStore: ObservableObject {
             observers.append(NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.didActivateApplicationNotification, object: nil, queue: .main) { [weak self] _ in
                 Task { @MainActor in
                     guard let self else { return }
+                    self.confirmAppActivation()
                     self.cancelPreAction()
                     self.coordinator.activeAppChanged(to: self.frontApp, at: ProcessInfo.processInfo.systemUptime)
                 }
+            })
+            observers.append(NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.didTerminateApplicationNotification, object: nil, queue: .main) { [weak self] _ in
+                Task { @MainActor in self?.cancelPreAction() }
             })
             observers.append(NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.activeSpaceDidChangeNotification, object: nil, queue: .main) { [weak self] _ in
                 let observedAt = ProcessInfo.processInfo.systemUptime
@@ -185,13 +197,21 @@ final class GestureStore: ObservableObject {
     func setAction(_ kind: ActionKind) {
         guard var rule = selected else { return }
         disableControl()
-        if kind == .shortcut || kind == .keyboard || kind.isContinuous {
+        if kind == .shortcut || kind == .keyboard || kind.isContinuous || kind == .switchApps {
             rule.action.kind = kind; editor = .init(rule: rule); return
         }
         rule.action.kind = kind; update(rule)
     }
     func editSelected() { guard let selected else { return }; disableControl(); testing = false; editor = .init(rule: selected) }
     func newGesture() { disableControl(); testing = false; editor = .init(rule: GestureRule(name: "My gesture", enabled: false)) }
+    func addAppSwitcherPreset() {
+        disableControl(); testing = false
+        if let existing = library.rules.first(where: { $0.action.kind == .switchApps }) {
+            selectedProfile = "*"; select(existing.id)
+        } else { update(.appSwitcherPreset) }
+        guard selected?.action.kind == .switchApps else { return }
+        notice = "Pinch, then slide sideways. Try Practice first; Edit gesture configures apps and sensitivity."
+    }
     func duplicateSelected() {
         guard var rule = selected else { return }; rule.id = UUID(); rule.name = String((rule.name + " copy").prefix(80)); rule.enabled = false
         rule.steps = rule.steps.map { var step = $0; step.id = UUID(); return step }; update(rule)
@@ -223,6 +243,7 @@ final class GestureStore: ObservableObject {
     }
     func disableControl() {
         enabled = false; coordinator.reset(); runner.cancelAll(); cancelSpaceCheck(); cancelPreAction()
+        expectedApp = nil; appActivationTimeout?.cancel(); appActivationTimeout = nil
         if let recognitionActivity { ProcessInfo.processInfo.endActivity(recognitionActivity); self.recognitionActivity = nil }
     }
     func mainWindowClosed() {
@@ -303,7 +324,7 @@ final class GestureStore: ObservableObject {
     private func receive(_ frame: HandFrame) {
         guard cameraWanted, cameraRunning else { return }
         let age = ProcessInfo.processInfo.systemUptime - frame.time
-        guard age >= 0, age < 0.35 else { coordinator.reset(); return }
+        guard age >= 0, age < 0.35 else { cancelPreAction(); coordinator.reset(); return }
         lastFrameAt = frame.time; tracking.frame = frame
         if recording { if recordedFrames.count < 160 { recordedFrames.append(frame) }; return }
         guard !isEditing, testing || enabled else { tracking.progress = .init(message: frame.hands.isEmpty ? "Preview only · show your hand" : "Hand detected · Mac control is off"); return }
@@ -314,11 +335,17 @@ final class GestureStore: ObservableObject {
         if testing, var rule = selected { rule.enabled = true; rule.scope = .init(); rules = [rule] }
         else { rules = library.rules }
         let optionHeld = CGEventSource.flagsState(.combinedSessionState).contains(.maskAlternate)
+        if appSwitch != nil {
+            continueAppSwitch(frame, optionHeld: optionHeld, frameAge: age)
+            return
+        }
         let result = coordinator.process(frame, rules: rules, selected: selectedID, app: testing ? "test" : activeApp, optionHeld: optionHeld)
         tracking.progress = result.progress
         let permission = DispatchPermission(enabled: enabled, testing: testing, cameraRunning: cameraRunning, editing: isEditing, frameAge: age, frontApp: activeApp, optionHeld: optionHeld)
         if let match = result.match {
-            if testing {
+            if match.rule.action.kind == .switchApps {
+                beginAppSwitch(match.rule, frame: frame, permission: permission)
+            } else if testing {
                 tracking.testMatches += 1; tracking.lastMatch = "Would run: \(match.rule.action.title)"
                 // Simulate continuous feedback in Practice; the runner remains gated off.
                 coordinator.resolveAction(match.rule, accepted: true)
@@ -330,6 +357,68 @@ final class GestureStore: ObservableObject {
             }
         }
         if let delta = result.scroll, let rule = result.scrollRule, !testing, !preActionPending { runner.scroll(delta, rule: rule, permission: permission) }
+    }
+    private func beginAppSwitch(_ rule: GestureRule, frame: HandFrame, permission: DispatchPermission) {
+        guard !preActionPending, !spaceCheckPending, !manualSpaceCheck, appSwitch == nil,
+              testing || (permission.allows(rule) && ActionRunner.hasAccess), !ActionRunner.secureInput else { return }
+        let targets = AppSwitchTarget.available(settings: rule.action.switcherSettings)
+        guard let session = AppSwitchSession(rule: rule, targets: targets, frame: frame, sourceApp: frontApp,
+                                            currentPID: NSWorkspace.shared.frontmostApplication?.processIdentifier, practicing: testing) else {
+            coordinator.finishInteractiveAction(rule, at: frame.time)
+            notice = targets.isEmpty ? "Open an included app before trying pinch & slide." : "Keep one pinched hand clearly visible."
+            return
+        }
+        guard appPicker.show(session) else { coordinator.finishInteractiveAction(rule, at: frame.time); return }
+        appSwitch = session
+        tracking.lastMatch = testing ? "Practice app picker" : "App picker opened"
+        tracking.actionStatus = "Keep pinching to browse · open pinch to choose"
+        appSwitchWatchdog = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .milliseconds(50))
+                guard !Task.isCancelled, let self, let session = self.appSwitch else { return }
+                let now = ProcessInfo.processInfo.systemUptime
+                if now - session.lastFrameAt > 0.35 || now - session.startedAt > session.rule.action.switcherSettings.timeout ||
+                    self.frontApp != session.sourceApp || ActionRunner.secureInput || (!session.practicing && !ActionRunner.hasAccess) {
+                    self.cancelAppSwitch(); self.notice = "App picker cancelled. No app was switched."; return
+                }
+            }
+        }
+    }
+    private func continueAppSwitch(_ frame: HandFrame, optionHeld: Bool, frameAge: Double) {
+        guard var session = appSwitch else { return }
+        let current = DispatchPermission(enabled: enabled, testing: testing, cameraRunning: cameraRunning,
+                                         editing: isEditing, frameAge: frameAge, frontApp: frontApp, optionHeld: optionHeld)
+        let unchanged = testing == session.practicing && (testing ? selected?.id == session.rule.id : library.rules.contains(session.rule))
+        let allowed = unchanged && !isEditing && cameraRunning && !recording && !ActionRunner.secureInput &&
+            (session.practicing ? testing : current.allows(session.rule) && ActionRunner.hasAccess)
+        let result = session.process(frame, app: frontApp, optionHeld: optionHeld, allowed: allowed)
+        appSwitch = session
+        switch result {
+        case .browsing:
+            appPicker.update(session)
+            tracking.progress = .init(step: session.rule.steps.count - 1, fraction: 1, message: "\(session.selected.name) · open pinch to choose", hand: frame.hands.first)
+        case .cancelled:
+            cancelAppSwitch(); tracking.actionStatus = "Cancelled · no app switched"
+        case .commit(let target):
+            cancelAppSwitch()
+            if session.practicing {
+                tracking.testMatches += 1; tracking.lastMatch = "Would switch to \(target.name)"; tracking.actionStatus = "Practice only · no app switched"
+            } else {
+                tracking.completedGestures += 1; tracking.lastMatch = "\(session.rule.name) completed"
+                dispatch(session.rule, permission: current, appTarget: target, direction: session.direction)
+            }
+        }
+    }
+    private func cancelAppSwitch() {
+        if let session = appSwitch { coordinator.finishInteractiveAction(session.rule, at: ProcessInfo.processInfo.systemUptime) }
+        appSwitch = nil; appSwitchWatchdog?.cancel(); appSwitchWatchdog = nil; appPicker.hide()
+    }
+    private func confirmAppActivation() {
+        guard let target = expectedApp else { return }
+        appActivationTimeout?.cancel(); appActivationTimeout = nil; expectedApp = nil
+        if target.runningApplication?.isActive == true {
+            tracking.actionStatus = "Switched to \(target.name)"; notice = tracking.actionStatus
+        } else { tracking.actionStatus = "App switching cancelled because the active app changed." }
     }
     func checkSpaceAction() {
         guard canCheckSpace, let rule = selected else { notice = "Enable Mac control to check a Space action. Practice mode never sends actions."; return }
@@ -350,11 +439,14 @@ final class GestureStore: ObservableObject {
         if !dispatch(rule, permission: permission) { cancelSpaceCheck() }
     }
     @discardableResult
-    private func dispatch(_ rule: GestureRule, permission: DispatchPermission) -> Bool {
+    private func dispatch(_ rule: GestureRule, permission: DispatchPermission, appTarget: AppSwitchTarget? = nil, direction: MoveDirection? = nil) -> Bool {
         guard !preActionPending, permission.allows(rule), !ActionRunner.secureInput else { coordinator.resolveAction(rule, accepted: false); return false }
+        guard rule.action.kind != .switchApps || appTarget != nil else { return false }
         let id = UUID(); preActionID = id; preActionPending = true
         let recognizedAt = lastFrameAt
-        desktopRipple.beforeAction(GlassFeedbackCue(rule: rule), frameAge: permission.frameAge) { [weak self] proceed in
+        var cue = GlassFeedbackCue(rule: rule)
+        if let direction { cue.direction = direction }
+        desktopRipple.beforeAction(cue, frameAge: permission.frameAge) { [weak self] proceed in
             guard let self, self.preActionID == id else { return }
             self.preActionPending = false
             guard proceed else { self.coordinator.resolveAction(rule, accepted: false); self.cancelSpaceCheck(); return }
@@ -365,7 +457,23 @@ final class GestureStore: ObservableObject {
                   current.allows(rule), current.frontApp == permission.frontApp, !ActionRunner.secureInput else {
                 self.coordinator.resolveAction(rule, accepted: false); self.cancelSpaceCheck(); self.notice = "Action cancelled because input changed during the ripple."; return
             }
-            self.executeAction(rule, permission: current)
+            if let appTarget, rule.action.kind == .switchApps {
+                do {
+                    guard self.library.rules.contains(rule) else { return }
+                    self.expectedApp = appTarget
+                    guard try self.runner.activate(appTarget, rule: rule, permission: current) else {
+                        self.expectedApp = nil; self.tracking.actionStatus = "macOS did not accept the app switch."; return
+                    }
+                    self.tracking.actionStatus = "Switch requested: \(appTarget.name)"
+                    self.appActivationTimeout?.cancel()
+                    self.appActivationTimeout = Task { [weak self] in
+                        try? await Task.sleep(for: .seconds(1))
+                        guard !Task.isCancelled, let self, self.expectedApp == appTarget else { return }
+                        if appTarget.runningApplication?.isActive == true { self.confirmAppActivation() }
+                        else { self.expectedApp = nil; self.tracking.actionStatus = "Switch requested · app activation was not confirmed" }
+                    }
+                } catch { self.expectedApp = nil; self.disableControl(); self.errorMessage = error.localizedDescription }
+            } else { self.executeAction(rule, permission: current) }
         }
         return true
     }
@@ -415,6 +523,7 @@ final class GestureStore: ObservableObject {
         spaceCheckWindow = nil; spaceCheckWindowWasActive = false
     }
     private func cancelPreAction() {
+        cancelAppSwitch()
         let wasPending = preActionPending
         coordinator.cancelPendingAction()
         preActionID = UUID(); preActionPending = false

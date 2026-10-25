@@ -61,16 +61,17 @@ struct GestureRecognizer {
             progress.fraction = min(1, (frame.time - (stepStarted ?? frame.time)) / step.duration)
             progress.message = "Hold still · \(Int(progress.fraction * 100))%"
             complete = progress.fraction >= 1
-        case .move:
+        case .move, .slide:
             guard match(activePose), let hand else { reset(); return .init(message: "Keep the same hand pose") }
             if anchor == nil { anchor = hand.palm; stepStarted = frame.time }
             guard elapsed <= step.maximumDuration else { reset(); return .init(message: "Try a quicker movement") }
             let delta = hand.palm - (anchor ?? hand.palm)
-            let forward = delta.dot(step.direction.vector)
-            let cross = abs(delta.x * step.direction.vector.y - delta.y * step.direction.vector.x)
-            if forward < -0.06 || cross > max(0.09, abs(forward) * 0.85) { reset(); return .init(message: "Move \(step.direction.rawValue.lowercased()) in a clear line") }
+            let forward = step.kind == .slide ? abs(delta.x) : delta.dot(step.direction.vector)
+            let cross = step.kind == .slide ? abs(delta.y) : abs(delta.x * step.direction.vector.y - delta.y * step.direction.vector.x)
+            let direction = step.kind == .slide ? "sideways" : step.direction.rawValue.lowercased()
+            if forward < -0.06 || cross > max(step.kind == .slide ? 0.04 : 0.09, abs(forward) * 0.85) { reset(); return .init(message: "Move \(direction) in a clear line") }
             progress.fraction = max(0, min(1, forward / step.distance))
-            progress.message = "Move \(step.direction.rawValue.lowercased()) · \(Int(progress.fraction * 100))%"
+            progress.message = "Move \(direction) · \(Int(progress.fraction * 100))%"
             complete = forward >= step.distance && elapsed >= 0.1
         case .release:
             if !match(activePose) {
@@ -116,6 +117,11 @@ struct RecognitionCoordinator {
         if let active = continuous, !continuousAccepted { resolveAction(active.rule, accepted: false) }
     }
     mutating func reset() { self = Self() }
+    mutating func finishInteractiveAction(_ rule: GestureRule, at time: Double) {
+        recognizers.removeAll()
+        if time.isFinite { cooldownUntil = max(cooldownUntil, time + rule.cooldown) }
+        if rule.requireNeutral { neutralRule = rule; neutralSince = nil }
+    }
     mutating func activeAppChanged(to app: String, at time: Double) {
         guard app != activeScope else { return }
         recognizers.removeAll(); activeScope = app

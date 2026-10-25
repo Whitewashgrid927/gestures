@@ -36,7 +36,7 @@ struct PoseDefinition: Codable, Equatable, Sendable {
     var label: String { kind.rawValue }
 }
 
-enum StepKind: String, Codable, CaseIterable, Sendable { case pose = "Pose", hold = "Hold", move = "Move", release = "Release" }
+enum StepKind: String, Codable, CaseIterable, Sendable { case pose = "Pose", hold = "Hold", move = "Move", slide = "Slide sideways", release = "Release" }
 enum MoveDirection: String, Codable, CaseIterable, Sendable {
     case left = "Left", right = "Right", up = "Up", down = "Down", upLeft = "Up left", upRight = "Up right", downLeft = "Down left", downRight = "Down right"
     var vector: Point2 {
@@ -65,22 +65,38 @@ struct GestureStep: Identifiable, Codable, Equatable, Sendable {
         case .pose: return pose.label
         case .hold: return "Hold \(Int(duration * 1000)) ms"
         case .move: return "Move \(direction.rawValue.lowercased())"
+        case .slide: return "Slide sideways"
         case .release: return "Release"
         }
     }
     var symbol: String {
-        switch kind { case .pose: return "hand.raised"; case .hold: return "clock"; case .move: return direction.symbol; case .release: return "hand.wave" }
+        switch kind { case .pose: return "hand.raised"; case .hold: return "clock"; case .move: return direction.symbol; case .slide: return "arrow.left.arrow.right"; case .release: return "hand.wave" }
     }
 }
 
 enum ActionKind: String, Codable, CaseIterable, Sendable {
-    case nextSpace = "Next Space", previousSpace = "Previous Space", missionControl = "Mission Control", appWindows = "App windows", keyboard = "Keyboard shortcut", shortcut = "macOS Shortcut", scrollVertical = "Vertical scroll", scrollHorizontal = "Horizontal scroll"
+    case nextSpace = "Next Space", previousSpace = "Previous Space", missionControl = "Mission Control", appWindows = "App windows", keyboard = "Keyboard shortcut", shortcut = "macOS Shortcut", scrollVertical = "Vertical scroll", scrollHorizontal = "Horizontal scroll", switchApps = "Switch apps"
     var isSpaceSwitch: Bool { self == .nextSpace || self == .previousSpace }
     var isContinuous: Bool { self == .scrollVertical || self == .scrollHorizontal }
     var needsAccessibility: Bool { self != .shortcut }
     var symbol: String {
-        switch self { case .nextSpace, .previousSpace: return "rectangle.on.rectangle"; case .missionControl, .appWindows: return "square.grid.2x2"; case .keyboard: return "keyboard"; case .shortcut: return "square.stack.3d.up"; case .scrollVertical: return "arrow.up.arrow.down"; case .scrollHorizontal: return "arrow.left.arrow.right" }
+        switch self { case .nextSpace, .previousSpace: return "rectangle.on.rectangle"; case .missionControl, .appWindows: return "square.grid.2x2"; case .keyboard: return "keyboard"; case .shortcut: return "square.stack.3d.up"; case .scrollVertical: return "arrow.up.arrow.down"; case .scrollHorizontal: return "arrow.left.arrow.right"; case .switchApps: return "app.badge.checkmark" }
     }
+}
+struct AppSwitcherSettings: Codable, Equatable, Sendable {
+    var distancePerApp = 0.075
+    var reversed = false
+    var timeout = 6.0
+    var onlyChosenApps = false
+    var bundleIDs: [String] = []
+    func validated() throws -> Self {
+        guard distancePerApp.isFinite, (0.04...0.2).contains(distancePerApp), timeout.isFinite, (3...10).contains(timeout),
+              bundleIDs.count <= 32, Set(bundleIDs).count == bundleIDs.count,
+              bundleIDs.allSatisfy({ !$0.isEmpty && $0.count <= 200 && $0.range(of: "^[A-Za-z0-9][A-Za-z0-9._-]+$", options: .regularExpression) != nil }),
+              !onlyChosenApps || !bundleIDs.isEmpty else { throw GestureError("Choose at least one app, and keep switcher distance and timeout within their supported ranges.") }
+        return self
+    }
+    func includes(_ bundleID: String) -> Bool { !onlyChosenApps || bundleIDs.contains(bundleID) }
 }
 struct KeyBinding: Codable, Equatable, Sendable {
     var code: UInt16 = 124
@@ -97,6 +113,9 @@ struct GestureAction: Codable, Equatable, Sendable {
     var shortcutName = ""
     var scrollSensitivity: Double = 1
     var reverseScroll = false
+    // Optional for libraries saved before app switching was introduced.
+    var appSwitcher: AppSwitcherSettings?
+    var switcherSettings: AppSwitcherSettings { appSwitcher ?? .init() }
     var title: String {
         switch kind { case .keyboard: return key.display; case .shortcut: return shortcutName.isEmpty ? "Choose a Shortcut" : shortcutName; default: return kind.rawValue }
     }
@@ -119,7 +138,7 @@ struct GestureRule: Identifiable, Codable, Equatable, Sendable {
     var cooldown: Double = 0.8
     var requireNeutral = true
     var requireOptionKey = false
-    var symbol: String { steps.first(where: { $0.kind == .move })?.direction.symbol ?? "hand.draw" }
+    var symbol: String { steps.first(where: { $0.kind == .move || $0.kind == .slide })?.symbol ?? "hand.draw" }
     var summary: String { steps.map(\.label).joined(separator: " → ") }
     func validated() throws -> Self {
         guard !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, name.count <= 80 else { throw GestureError("Give the gesture a name of up to 80 characters.") }
@@ -134,6 +153,12 @@ struct GestureRule: Identifiable, Codable, Equatable, Sendable {
             if step.kind == .pose && step.pose.kind == .custom && Finger.allCases.allSatisfy({ step.pose.requirement($0) == .any }) && step.pose.pinchRequirement == .any { throw GestureError("Choose at least one finger or pinch condition for a custom pose.") }
         }
         if action.kind.isContinuous && steps.contains(where: { $0.kind == .release }) { throw GestureError("Continuous scrolling stops when you release the final pose. Remove the Release step.") }
+        if let settings = action.appSwitcher { _ = try settings.validated() }
+        if action.kind == .switchApps {
+            _ = try action.switcherSettings.validated()
+            guard steps.last(where: { $0.kind == .pose })?.pose.pinchRequirement == .touching,
+                  !steps.contains(where: { $0.kind == .release }) else { throw GestureError("App switching must end with a pinched pose. Leave out Release: opening your pinch selects the highlighted app.") }
+        }
         guard scope.name.count <= 100, scope.bundleID.count <= 200,
               scope.bundleID.isEmpty || scope.bundleID.range(of: "^[A-Za-z0-9][A-Za-z0-9._-]+$", options: .regularExpression) != nil else { throw GestureError("Choose a valid app profile.") }
         guard action.key.code <= 126, !action.key.label.isEmpty, action.key.label.count <= 40,
@@ -147,7 +172,13 @@ struct GestureRule: Identifiable, Codable, Equatable, Sendable {
         var right = Self(name: "Swipe right"); right.steps[2].direction = .right; right.action.kind = .previousSpace
         var scroll = Self(name: "Pinch & scroll"); scroll.steps = [.init(kind: .pose, pose: .init(kind: .pinch)), .init(kind: .hold, duration: 0.2)]; scroll.action.kind = .scrollVertical; scroll.enabled = false
         left.action.kind = .nextSpace
-        return [left, right, scroll]
+        return [left, right, scroll, appSwitcherPreset]
+    }
+    static var appSwitcherPreset: Self {
+        var rule = Self(name: "Pinch & slide", enabled: false)
+        rule.steps = [.init(kind: .pose, pose: .init(kind: .pinch)), .init(kind: .slide, distance: 0.04)]
+        rule.action.kind = .switchApps; rule.action.appSwitcher = .init()
+        return rule
     }
 }
 struct GestureLibrary: Codable, Equatable, Sendable {

@@ -1,0 +1,108 @@
+import AppKit
+import Foundation
+
+/// A picker snapshots process identities, not paths or commands. Never persisted.
+struct AppSwitchTarget: Identifiable, Equatable, Sendable {
+    var id: Int32
+    var bundleID: String
+    var name: String
+    var launchedAt: Date?
+    @MainActor var runningApplication: NSRunningApplication? {
+        guard let app = NSRunningApplication(processIdentifier: id), !app.isTerminated,
+              app.activationPolicy == .regular, app.bundleIdentifier == bundleID,
+              app.launchDate == launchedAt else { return nil }
+        return app
+    }
+    @MainActor static func available(settings: AppSwitcherSettings) -> [Self] {
+        let current = NSWorkspace.shared.frontmostApplication?.processIdentifier
+        return NSWorkspace.shared.runningApplications.compactMap { app -> Self? in
+            guard app.activationPolicy == .regular, !app.isTerminated,
+                  app.processIdentifier != ProcessInfo.processInfo.processIdentifier,
+                  let bundleID = app.bundleIdentifier, settings.includes(bundleID) else { return nil }
+            return .init(id: app.processIdentifier, bundleID: bundleID,
+                         name: app.localizedName ?? bundleID, launchedAt: app.launchDate)
+        }.sorted {
+            if ($0.id == current) != ($1.id == current) { return $0.id == current }
+            let order = $0.name.localizedStandardCompare($1.name)
+            return order == .orderedSame ? $0.id < $1.id : order == .orderedAscending
+        }.prefix(20).map { $0 }
+    }
+}
+
+enum AppSwitchUpdate: Equatable { case browsing, commit(AppSwitchTarget), cancelled }
+
+/// Selection uses current, confident one-hand input. Absence is never a release.
+struct AppSwitchSession {
+    let rule: GestureRule
+    let targets: [AppSwitchTarget]
+    let sourceApp: String
+    let practicing: Bool
+    let startedAt: Double
+    private let sourcePID: Int32?
+    private(set) var selectedIndex: Int
+    private(set) var lastFrameAt: Double
+    private(set) var direction: MoveDirection?
+    private(set) var finished = false
+    private var previousHand: TrackedHand
+    private var filteredX: Double
+    private var anchorX: Double
+    private var releaseSince: Double?
+    private var uncertainSince: Double?
+    private var moved = false
+    var selected: AppSwitchTarget { targets[selectedIndex] }
+
+    init?(rule: GestureRule, targets: [AppSwitchTarget], frame: HandFrame, sourceApp: String,
+          currentPID: Int32?, practicing: Bool) {
+        guard (try? rule.validated()) != nil, rule.action.kind == .switchApps,
+              !targets.isEmpty, targets.count <= 20, Set(targets.map(\.id)).count == targets.count,
+              targets.allSatisfy({ rule.action.switcherSettings.includes($0.bundleID) }), frame.time.isFinite,
+              frame.hands.count == 1, let hand = frame.hands.first,
+              hand.matches(.init(kind: .pinch), hand: rule.hand, minimum: rule.confidence) else { return nil }
+        self.rule = rule; self.targets = targets; self.sourceApp = sourceApp; self.practicing = practicing
+        sourcePID = currentPID
+        startedAt = frame.time; lastFrameAt = frame.time; previousHand = hand
+        filteredX = hand.palm.x; anchorX = hand.palm.x
+        selectedIndex = targets.firstIndex(where: { $0.id == currentPID }) ?? 0
+    }
+    mutating func cancel() { finished = true }
+    mutating func process(_ frame: HandFrame, app: String, optionHeld: Bool, allowed: Bool) -> AppSwitchUpdate {
+        guard !finished else { return .cancelled }
+        let settings = rule.action.switcherSettings
+        guard allowed, app == sourceApp, frame.time.isFinite, frame.time > lastFrameAt,
+              frame.time - lastFrameAt <= 0.25, frame.time - startedAt <= settings.timeout,
+              !rule.requireOptionKey || optionHeld, frame.hands.count == 1, let hand = frame.hands.first,
+              hand.matches(.init(kind: .any), hand: rule.hand, minimum: rule.confidence),
+              (previousHand.side == .either || hand.side == previousHand.side),
+              (hand.palm - previousHand.palm).length < 0.15 else { finished = true; return .cancelled }
+        let dt = frame.time - lastFrameAt
+        lastFrameAt = frame.time; previousHand = hand
+        if hand.matches(.init(kind: .pinch), hand: rule.hand, minimum: rule.confidence) {
+            // A partial release cannot move the selection if the hand re-pinches.
+            if releaseSince != nil || uncertainSince != nil { filteredX = hand.palm.x; anchorX = hand.palm.x }
+            releaseSince = nil; uncertainSince = nil
+            filteredX += (hand.palm.x - filteredX) * (1 - exp(-dt / 0.055))
+            let offset = filteredX - anchorX
+            let steps = Int(abs(offset) / settings.distancePerApp)
+            if steps > 0 {
+                let physical = offset > 0 ? 1 : -1
+                let logical = settings.reversed ? -physical : physical
+                selectedIndex = (selectedIndex + logical * steps % targets.count + targets.count) % targets.count
+                anchorX += Double(physical * steps) * settings.distancePerApp
+                moved = true; direction = physical > 0 ? .right : .left
+            }
+            return .browsing
+        }
+        let apart = PoseDefinition(kind: .custom, thumb: .any, index: .any, middle: .any, ring: .any, little: .any, pinch: .apart)
+        if hand.matches(apart, hand: rule.hand, minimum: rule.confidence) {
+            uncertainSince = nil
+            if releaseSince == nil { releaseSince = frame.time }
+            guard frame.time - (releaseSince ?? frame.time) >= 0.12 else { return .browsing }
+            finished = true
+            return moved && selected.id != sourcePID ? .commit(selected) : .cancelled
+        }
+        releaseSince = nil
+        if uncertainSince == nil { uncertainSince = frame.time }
+        if frame.time - (uncertainSince ?? frame.time) > 0.18 { finished = true; return .cancelled }
+        return .browsing
+    }
+}

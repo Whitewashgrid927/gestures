@@ -23,7 +23,10 @@ struct GesturesApp: App {
         .windowStyle(.hiddenTitleBar)
         .windowResizability(.contentMinSize)
         .commands {
-            CommandGroup(replacing: .newItem) { Button("New gesture") { store.newGesture() }.keyboardShortcut("n") }
+            CommandGroup(replacing: .newItem) {
+                Button("New gesture") { store.newGesture() }.keyboardShortcut("n")
+                Button("Pinch & slide preset") { store.addAppSwitcherPreset() }
+            }
             CommandGroup(replacing: .undoRedo) {
                 Button("Undo gesture change") { store.undo() }.keyboardShortcut("z").disabled(!store.canUndo || store.isEditing)
                 Button("Redo gesture change") { store.redo() }.keyboardShortcut("z", modifiers: [.command, .shift]).disabled(!store.canRedo || store.isEditing)

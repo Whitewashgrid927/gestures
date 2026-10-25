@@ -7,7 +7,7 @@ struct PlannedKey: Equatable, Sendable {
     var code: UInt16
     var command = false; var option = false; var control = false; var shift = false
 }
-enum ActionPlan: Equatable, Sendable { case key(PlannedKey), shortcut(String), continuous }
+enum ActionPlan: Equatable, Sendable { case key(PlannedKey), shortcut(String), continuous, appPicker }
 enum ActionPlanner {
     static func plan(_ action: GestureAction) -> ActionPlan {
         switch action.kind {
@@ -18,6 +18,7 @@ enum ActionPlanner {
         case .keyboard: return .key(.init(code: action.key.code, command: action.key.command, option: action.key.option, control: action.key.control, shift: action.key.shift))
         case .shortcut: return .shortcut(action.shortcutName)
         case .scrollVertical, .scrollHorizontal: return .continuous
+        case .switchApps: return .appPicker
         }
     }
 }
@@ -171,8 +172,21 @@ final class ActionRunner {
             }
             completion("Running \(name)")
         case .continuous: lastAction = now; completion("Scrolling · release the pose to stop")
+        case .appPicker: throw GestureError("Choose an app in the pinch-and-slide picker before switching.")
         }
         return true
+    }
+    func activate(_ target: AppSwitchTarget, rule: GestureRule, permission: DispatchPermission) throws -> Bool {
+        guard rule.action.kind == .switchApps, permission.allows(rule), Self.hasAccess, !Self.secureInput,
+              NSWorkspace.shared.frontmostApplication?.bundleIdentifier == permission.frontApp,
+              rule.action.switcherSettings.includes(target.bundleID) else { throw GestureError("App switching is paused. No app was activated.") }
+        _ = try rule.validated()
+        guard let app = target.runningApplication else { throw GestureError("That app is no longer running. Try the gesture again.") }
+        let now = ProcessInfo.processInfo.systemUptime
+        guard now - lastAction >= 0.3 else { return false }
+        let accepted = app.activate(options: [])
+        if accepted { lastAction = now }
+        return accepted
     }
     func scroll(_ delta: Point2, rule: GestureRule, permission: DispatchPermission) {
         guard permission.allows(rule), rule.action.kind.isContinuous, !Self.secureInput, Self.hasAccess, delta.finite else { return }
