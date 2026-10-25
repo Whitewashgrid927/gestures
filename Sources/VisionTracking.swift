@@ -40,13 +40,24 @@ enum HandGeometry {
             return acos(max(-1, min(1, u.dot(v) / (u.length * v.length)))) * 180 / .pi
         }
         var states: [Finger: FingerState] = [:]
+        var curledEvidence: [Finger: [String]] = [:]
         if let wrist = point("wrist") {
             for finger in Finger.allCases where finger != .thumb {
                 let prefix = finger.rawValue.lowercased()
-                if let mcp = point(prefix + "MCP"), let pip = point(prefix + "PIP"), let dip = point(prefix + "DIP"), let tip = point(prefix + "Tip") {
-                    let a = angle(mcp, pip, dip), b = angle(pip, dip, tip)
-                    if a >= 150 && b >= 145 && (tip - wrist).length > (pip - wrist).length * 1.08 { states[finger] = .extended }
-                    else if a < 130 || (tip - wrist).length < (pip - wrist).length * 1.02 { states[finger] = .curled }
+                if let mcp = point(prefix + "MCP"), let pip = point(prefix + "PIP"), let dip = point(prefix + "DIP") {
+                    let a = angle(mcp, pip, dip)
+                    if (mcp - pip).length > 0.0001, (dip - pip).length > 0.0001, a < 130 {
+                        // A visible joint bend proves curl without requiring an occluded fingertip.
+                        states[finger] = .curled
+                        curledEvidence[finger] = [prefix + "MCP", prefix + "PIP", prefix + "DIP"]
+                    } else if let tip = point(prefix + "Tip") {
+                        let b = angle(pip, dip, tip)
+                        if a >= 150 && b >= 145 && (tip - wrist).length > (pip - wrist).length * 1.08 { states[finger] = .extended }
+                        else if (tip - wrist).length < (pip - wrist).length * 1.02 {
+                            states[finger] = .curled
+                            curledEvidence[finger] = ["wrist", prefix + "MCP", prefix + "PIP", prefix + "DIP", prefix + "Tip"]
+                        }
+                    }
                 }
             }
             if let cmc = point("thumbCMC"), let mcp = point("thumbMCP"), let ip = point("thumbIP"), let tip = point("thumbTip") {
@@ -56,7 +67,7 @@ enum HandGeometry {
         }
         var pinch: Double?
         if let thumb = point("thumbTip"), let index = point("indexTip"), let a = point("indexMCP"), let b = point("littleMCP"), (a - b).length > 0.015 { pinch = (thumb - index).length / (a - b).length }
-        return .init(side: side, joints: joints, palm: palm, confidence: confidence, fingers: states, pinchRatio: pinch)
+        return .init(side: side, joints: joints, palm: palm, confidence: confidence, fingers: states, pinchRatio: pinch, curledEvidence: curledEvidence)
     }
 }
 
@@ -67,10 +78,12 @@ final class VisionTracker {
     func detect(buffer: CVPixelBuffer, time: Double) throws -> HandFrame {
         let width = Double(CVPixelBufferGetWidth(buffer)), height = Double(CVPixelBufferGetHeight(buffer))
         try VNImageRequestHandler(cvPixelBuffer: buffer, orientation: .up).perform([request])
-        return .init(time: time, hands: (request.results ?? []).compactMap { HandGeometry.convert($0, width: width, height: height) }, width: width, height: height)
+        let observations = request.results ?? []
+        return .init(time: time, hands: observations.compactMap { HandGeometry.convert($0, width: width, height: height) }, width: width, height: height, detectedHands: observations.count)
     }
     func detect(image: CGImage, time: Double, mirrored: Bool = true) throws -> HandFrame {
         try VNImageRequestHandler(cgImage: image, orientation: .up).perform([request])
-        return .init(time: time, hands: (request.results ?? []).compactMap { HandGeometry.convert($0, width: Double(image.width), height: Double(image.height), mirrored: mirrored) }, width: Double(image.width), height: Double(image.height))
+        let observations = request.results ?? []
+        return .init(time: time, hands: observations.compactMap { HandGeometry.convert($0, width: Double(image.width), height: Double(image.height), mirrored: mirrored) }, width: Double(image.width), height: Double(image.height), detectedHands: observations.count)
     }
 }

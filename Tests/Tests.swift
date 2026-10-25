@@ -82,6 +82,7 @@ struct GesturesTests {
     static func main() throws {
         try appSwitchingChecks()
         try scrollingChecks()
+        try volumeChecks()
         let rule = GestureRule.examples[0]
         _ = try GestureLibrary().validated()
         expect(matches(swipeFrames(), rule: rule) == 1, "A deliberate left swipe completes once")
@@ -577,7 +578,7 @@ struct GesturesTests {
             expect(!frame.hands.isEmpty, "Apple Vision detects hand landmarks in the AI-generated concept image")
             print("VISION SMOKE: \(frame.hands.count) hand(s), \(frame.hands.map { $0.joints.count }) joints; generated image only, no camera.")
         }
-        print("\(checks - failures.count)/\(checks) checks passed. No camera, keyboard events, scroll events, or Shortcuts were executed.")
+        print("\(checks - failures.count)/\(checks) checks passed. No camera, keyboard events, scroll events, volume changes, or Shortcuts were executed.")
         if !failures.isEmpty { exit(1) }
     }
 }

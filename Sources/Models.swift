@@ -75,12 +75,13 @@ struct GestureStep: Identifiable, Codable, Equatable, Sendable {
 }
 
 enum ActionKind: String, Codable, CaseIterable, Sendable {
-    case nextSpace = "Next Space", previousSpace = "Previous Space", missionControl = "Mission Control", appWindows = "App windows", keyboard = "Keyboard shortcut", shortcut = "macOS Shortcut", scrollVertical = "Vertical scroll", scrollHorizontal = "Horizontal scroll", switchApps = "Switch apps"
+    case nextSpace = "Next Space", previousSpace = "Previous Space", missionControl = "Mission Control", appWindows = "App windows", keyboard = "Keyboard shortcut", shortcut = "macOS Shortcut", scrollVertical = "Vertical scroll", scrollHorizontal = "Horizontal scroll", switchApps = "Switch apps", volume = "Output volume"
     var isSpaceSwitch: Bool { self == .nextSpace || self == .previousSpace }
-    var isContinuous: Bool { self == .scrollVertical || self == .scrollHorizontal }
-    var needsAccessibility: Bool { self != .shortcut }
+    var isScroll: Bool { self == .scrollVertical || self == .scrollHorizontal }
+    var isContinuous: Bool { isScroll || self == .volume }
+    var needsAccessibility: Bool { self != .shortcut && self != .volume }
     var symbol: String {
-        switch self { case .nextSpace, .previousSpace: return "rectangle.on.rectangle"; case .missionControl, .appWindows: return "square.grid.2x2"; case .keyboard: return "keyboard"; case .shortcut: return "square.stack.3d.up"; case .scrollVertical: return "arrow.up.arrow.down"; case .scrollHorizontal: return "arrow.left.arrow.right"; case .switchApps: return "app.badge.checkmark" }
+        switch self { case .nextSpace, .previousSpace: return "rectangle.on.rectangle"; case .missionControl, .appWindows: return "square.grid.2x2"; case .keyboard: return "keyboard"; case .shortcut: return "square.stack.3d.up"; case .scrollVertical: return "arrow.up.arrow.down"; case .scrollHorizontal: return "arrow.left.arrow.right"; case .switchApps: return "app.badge.checkmark"; case .volume: return "speaker.wave.2" }
     }
 }
 struct AppSwitcherSettings: Codable, Equatable, Sendable {
@@ -119,6 +120,8 @@ struct GestureAction: Codable, Equatable, Sendable {
     // Optional for libraries saved before app switching was introduced.
     var appSwitcher: AppSwitcherSettings?
     var switcherSettings: AppSwitcherSettings { appSwitcher ?? .init() }
+    var volume: VolumeSettings?
+    var volumeSettings: VolumeSettings { volume ?? .init() }
     var title: String {
         switch kind { case .keyboard: return key.display; case .shortcut: return shortcutName.isEmpty ? "Choose a Shortcut" : shortcutName; default: return kind.rawValue }
     }
@@ -155,9 +158,10 @@ struct GestureRule: Identifiable, Codable, Equatable, Sendable {
             if step.kind == .release && index != steps.count - 1 { throw GestureError("Release must be the last step.") }
             if step.kind == .pose && step.pose.kind == .custom && Finger.allCases.allSatisfy({ step.pose.requirement($0) == .any }) && step.pose.pinchRequirement == .any { throw GestureError("Choose at least one finger or pinch condition for a custom pose.") }
         }
-        if action.kind.isContinuous && steps.contains(where: { $0.kind == .release }) { throw GestureError("Continuous scrolling stops when you release the final pose. Remove the Release step.") }
+        if action.kind.isContinuous && steps.contains(where: { $0.kind == .release }) { throw GestureError("Continuous actions stop when you release the final pose. Remove the Release step.") }
         if let settings = action.appSwitcher { _ = try settings.validated() }
         if let settings = action.scrolling { _ = try settings.validated() }
+        if let settings = action.volume { _ = try settings.validated() }
         if action.kind == .switchApps {
             _ = try action.switcherSettings.validated()
             guard steps.last(where: { $0.kind == .pose })?.pose.pinchRequirement == .touching,
@@ -175,7 +179,13 @@ struct GestureRule: Identifiable, Codable, Equatable, Sendable {
         var left = Self(name: "Swipe left")
         var right = Self(name: "Swipe right"); right.steps[2].direction = .right; right.action.kind = .previousSpace
         left.action.kind = .nextSpace
-        return [left, right, twoFingerScrollPreset, appSwitcherPreset]
+        return [left, right, twoFingerScrollPreset, appSwitcherPreset, volumePreset]
+    }
+    static var volumePreset: Self {
+        var rule = Self(name: "Fist & slide", enabled: false)
+        rule.steps = [.init(kind: .pose, pose: .init(kind: .fist))]
+        rule.action.kind = .volume; rule.action.volume = .init()
+        return rule
     }
     static var twoFingerScrollPreset: Self {
         var rule = Self(name: "Two-finger scroll", enabled: false)
@@ -217,6 +227,8 @@ struct TrackedHand: Sendable, Equatable {
     var confidence: Double
     var fingers: [Finger: FingerState]
     var pinchRatio: Double?
+    // Joint names that positively establish a curl; generated from geometry, never from missing data.
+    var curledEvidence: [Finger: [String]] = [:]
     func matches(_ pose: PoseDefinition, hand: HandChoice, minimum: Double) -> Bool {
         guard confidence.isFinite, confidence >= minimum, confidence <= 1, palm.finite,
               (0...1).contains(palm.x), (0...1).contains(palm.y),
@@ -226,8 +238,9 @@ struct TrackedHand: Sendable, Equatable {
             if required != .any {
                 guard fingers[finger] == required else { return false }
                 let prefix = finger == .little ? "little" : finger.rawValue.lowercased()
-                let names = finger == .thumb ? ["thumbCMC", "thumbMCP", "thumbIP", "thumbTip"] : [prefix + "MCP", prefix + "PIP", prefix + "DIP", prefix + "Tip"]
-                guard names.allSatisfy({ joints[$0].map { $0.confidence >= minimum && $0.point.finite } == true }) else { return false }
+                let fullChain = finger == .thumb ? ["thumbCMC", "thumbMCP", "thumbIP", "thumbTip"] : [prefix + "MCP", prefix + "PIP", prefix + "DIP", prefix + "Tip"]
+                let names = pose.kind == .fist && required == .curled ? curledEvidence[finger] ?? fullChain : fullChain
+                guard names.count >= 3, names.allSatisfy({ joints[$0].map { $0.confidence >= minimum && $0.point.finite } == true }) else { return false }
             }
         }
         if pose.pinchRequirement != .any, !hasPinchLandmarks(minimum: minimum) { return false }
@@ -248,10 +261,50 @@ struct TrackedHand: Sendable, Equatable {
         guard pinchRatio != nil else { return "Face your palm toward the camera" }
         return "Bring thumb and index fingertips together"
     }
+    func fistGuidance(minimum: Double) -> String {
+        for finger in [Finger.index, .middle, .ring, .little] {
+            let prefix = finger.rawValue.lowercased()
+            let evidence = curledEvidence[finger] ?? [prefix + "MCP", prefix + "PIP", prefix + "DIP", prefix + "Tip"]
+            if !evidence.allSatisfy({ joints[$0].map { $0.confidence >= minimum && $0.point.finite } == true }) {
+                return "Turn your fist slightly · show \(prefix) finger"
+            }
+            if fingers[finger] != .curled { return "Bend your \(prefix) finger into your palm" }
+        }
+        return "Hold one clear fist briefly"
+    }
+    /// Uncertainty can freeze an existing volume session, but can never authorize movement.
+    func fistIsUncertain(hand: HandChoice, minimum: Double) -> Bool {
+        guard confidence.isFinite, (0.3...1).contains(confidence), palm.finite,
+              (0...1).contains(palm.x), (0...1).contains(palm.y),
+              hand == .either || side == hand,
+              !matches(.init(kind: .fist), hand: hand, minimum: minimum) else { return false }
+        for finger in [Finger.index, .middle, .ring, .little] where fingers[finger] == .extended {
+            let prefix = finger.rawValue.lowercased()
+            if ["MCP", "PIP", "DIP", "Tip"].allSatisfy({ suffix in
+                joints[prefix + suffix].map { $0.confidence >= minimum && $0.point.finite } == true
+            }) { return false } // A confidently opened finger is a release, not uncertainty.
+        }
+        return true
+    }
+    /// Arbitration only: a partially occluded fist must not fall through to pinch.
+    /// Starting or moving volume still requires the complete configured fist pose.
+    func isFistCandidate(hand: HandChoice, minimum: Double) -> Bool {
+        guard matches(.init(kind: .any), hand: hand, minimum: minimum) else { return false }
+        if matches(.init(kind: .fist), hand: hand, minimum: minimum) { return true }
+        guard fistIsUncertain(hand: hand, minimum: minimum) else { return false }
+        let visibleBends = [Finger.index, .middle, .ring, .little].filter { finger in
+            guard fingers[finger] == .curled else { return false }
+            let prefix = finger.rawValue.lowercased()
+            let names = curledEvidence[finger] ?? [prefix + "MCP", prefix + "PIP", prefix + "DIP", prefix + "Tip"]
+            return names.count >= 3 && names.allSatisfy { joints[$0].map { $0.confidence >= minimum && $0.point.finite } == true }
+        }
+        return visibleBends.count >= 3
+    }
 }
 struct HandFrame: Sendable {
     var time: Double
     var hands: [TrackedHand]
     var width: Double = 1280
     var height: Double = 720
+    var detectedHands: Int? = nil
 }

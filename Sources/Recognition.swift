@@ -8,6 +8,27 @@ struct RecognitionProgress: Sendable {
     var hand: TrackedHand?
 }
 
+struct FistStability {
+    // A closed fist naturally hides joints between confident observations. This
+    // window collects positive evidence; it never treats uncertainty as a match.
+    static let armingWindow = 0.5
+    static let uncertaintyLimit = 0.35
+    private var first: Double?
+    private var last: Double?
+    private var samples = 0
+    mutating func accept(at time: Double) -> (fraction: Double, complete: Bool) {
+        if let last, time <= last || time - last > Self.armingWindow { self = .init() }
+        if let first, time - first > Self.armingWindow { self = .init() }
+        if first == nil { first = time }
+        last = time; samples += 1
+        let fraction = min(1, max(0, (time - (first ?? time)) / 0.12))
+        return (fraction, fraction >= 1 && samples >= 3)
+    }
+    mutating func uncertain(at time: Double) {
+        if let last, time - last > Self.armingWindow { self = .init() }
+    }
+}
+
 struct GestureRecognizer {
     private(set) var index = 0
     private var stepStarted: Double?
@@ -19,6 +40,7 @@ struct GestureRecognizer {
     private var sequenceStarted: Double?
     private var activePose = PoseDefinition()
     private var releaseSince: Double?
+    private var fistStability = FistStability()
     mutating func reset() { self = Self() }
 
     mutating func process(_ frame: HandFrame, rule: GestureRule) -> RecognitionProgress {
@@ -27,7 +49,11 @@ struct GestureRecognizer {
         lastFrameTime = frame.time
         if let sequenceStarted, frame.time - sequenceStarted > 20 { reset(); lastFrameTime = frame.time }
         if index >= rule.steps.count { reset(); lastFrameTime = frame.time }
-        let candidates = frame.hands.filter { $0.confidence >= rule.confidence && $0.palm.finite && (rule.hand == .either || $0.side == rule.hand) }
+        let fistPose = rule.action.kind == .volume && rule.steps[index].kind == .pose && rule.steps[index].pose.kind == .fist
+        let candidates = frame.hands.filter {
+            ($0.confidence >= rule.confidence || (fistPose && $0.fistIsUncertain(hand: rule.hand, minimum: rule.confidence))) &&
+            $0.palm.finite && (rule.hand == .either || $0.side == rule.hand)
+        }
         let hand: TrackedHand?
         if let previous = lastHand, let lastSeen, frame.time - lastSeen < 0.35 {
             hand = candidates.filter { previous.side == .either || $0.side == .either || $0.side == previous.side }
@@ -40,6 +66,7 @@ struct GestureRecognizer {
         let elapsed = frame.time - (stepStarted ?? frame.time)
         var progress = RecognitionProgress(step: index, message: step.label, hand: hand)
         if step.kind != .release, hand == nil {
+            if fistPose { fistStability = .init(); poseSince = nil }
             if let lastSeen, frame.time - lastSeen < 0.16 { progress.message = "Keep your hand visible"; return progress }
             reset(); progress = .init(message: "Show a clear \(rule.hand == .either ? "hand" : rule.hand.rawValue.lowercased())")
             return progress
@@ -52,11 +79,21 @@ struct GestureRecognizer {
                 if poseSince == nil { poseSince = frame.time; sequenceStarted = frame.time }
                 progress.fraction = min(1, (frame.time - (poseSince ?? frame.time)) / 0.12)
                 if step.pose.kind == .pinch { progress.message = "Pinch seen · keep fingers together" }
+                if step.pose.kind == .fist { progress.message = "Fist seen · keep it closed" }
                 complete = progress.fraction >= 1
+                if rule.action.kind == .volume && step.pose.kind == .fist {
+                    let stability = fistStability.accept(at: frame.time)
+                    progress.fraction = stability.fraction; complete = stability.complete
+                }
                 if complete { activePose = step.pose }
             } else {
                 poseSince = nil
-                progress.message = step.pose.kind == .pinch ? (hand?.pinchGuidance(minimum: rule.confidence) ?? "Show a clear hand") : "Show \(step.pose.label.lowercased())"
+                if rule.action.kind == .volume && step.pose.kind == .fist,
+                   hand?.fistIsUncertain(hand: rule.hand, minimum: rule.confidence) == true {
+                    fistStability.uncertain(at: frame.time)
+                } else { fistStability = .init() }
+                if step.pose.kind == .fist { progress.message = hand?.fistGuidance(minimum: rule.confidence) ?? "Show a clear hand" }
+                else { progress.message = step.pose.kind == .pinch ? (hand?.pinchGuidance(minimum: rule.confidence) ?? "Show a clear hand") : "Show \(step.pose.label.lowercased())" }
             }
         case .hold:
             guard match(activePose), let hand else { reset(); return .init(message: "Hold the same pose") }
@@ -86,7 +123,7 @@ struct GestureRecognizer {
             if elapsed > 5 { reset(); return .init(message: "Start the gesture again") }
         }
         if complete {
-            index += 1; stepStarted = frame.time; anchor = hand?.palm; poseSince = nil; releaseSince = nil
+            index += 1; stepStarted = frame.time; anchor = hand?.palm; poseSince = nil; releaseSince = nil; fistStability = .init()
             if index == rule.steps.count { progress.matched = true; progress.fraction = 1; progress.message = "\(rule.name) detected" }
             else { progress.step = index; progress.fraction = 0; progress.message = rule.steps[index].label }
         }
@@ -101,6 +138,8 @@ struct CoordinatorResult: Sendable {
     var scroll: Point2?
     var scrollRule: GestureRule?
     var scrollFeedback: ScrollFeedback?
+    var volume: Double?
+    var volumeRule: GestureRule?
 }
 struct RecognitionCoordinator {
     private var recognizers: [UUID: GestureRecognizer] = [:]
@@ -108,14 +147,17 @@ struct RecognitionCoordinator {
     private var neutralRule: GestureRule?
     private var neutralSince: Double?
     private var activeScope = ""
-    private var continuous: ContinuousScrollSession?
+    private var continuous: ContinuousGestureSession?
     private var continuousAccepted = false
     var continuousRule: GestureRule? { continuous?.rule }
+    var continuousConfidenceDeadline: Double? { continuous?.confidenceDeadline }
+    var continuousNeedsConfidence: Bool { continuous?.confidenceDeadline != nil }
     mutating func resolveAction(_ rule: GestureRule, accepted: Bool) {
         guard let active = continuous, active.rule == rule else { return }
         if accepted {
             continuousAccepted = true
             continuous?.motion = .init(origin: active.hand.palm)
+            continuous?.volumeMotion = .init(origin: active.hand.palm)
         }
         else {
             continuous = nil; continuousAccepted = false
@@ -156,14 +198,19 @@ struct RecognitionCoordinator {
                   rules.contains(where: { $0 == active.rule && $0.enabled && ($0.scope.isGlobal || $0.scope.bundleID == app) }),
                   let pixels = active.sample(frame) else {
                 stopContinuous(at: frame.time)
-                result.progress.message = "Scrolling stopped"; return result
+                result.progress.message = active.rule.action.kind == .volume ? "Volume stopped" : "Scrolling stopped"; return result
             }
+            let volume = active.rule.action.kind == .volume
             if continuousAccepted {
-                result.scroll = active.rule.action.kind == .scrollVertical ? .init(x: 0, y: pixels) : .init(x: pixels, y: 0)
-                result.scrollRule = active.rule
+                if volume { result.volume = pixels; result.volumeRule = active.rule }
+                else {
+                    result.scroll = active.rule.action.kind == .scrollVertical ? .init(x: 0, y: pixels) : .init(x: pixels, y: 0)
+                    result.scrollRule = active.rule
+                }
             }
-            result.scrollFeedback = .init(action: active.rule.action, amount: continuousAccepted ? pixels : 0, preparing: !continuousAccepted)
-            result.progress = .init(step: active.rule.steps.count - 1, fraction: 1, message: continuousAccepted ? "Move to scroll · release to stop" : "Preparing scroll…", hand: active.hand)
+            if !volume { result.scrollFeedback = .init(action: active.rule.action, amount: continuousAccepted ? pixels : 0, preparing: !continuousAccepted) }
+            let instruction = volume ? (active.confidenceDeadline == nil ? "Move to adjust volume · open your hand to stop" : "Keep fist visible · volume paused") : "Move to scroll · release to stop"
+            result.progress = .init(step: active.rule.steps.count - 1, fraction: 1, message: continuousAccepted ? instruction : (volume ? "Preparing volume…" : "Preparing scroll…"), hand: active.hand)
             continuous = active
             return result
         }
@@ -179,10 +226,19 @@ struct RecognitionCoordinator {
             .sorted { !$0.scope.isGlobal && $1.scope.isGlobal }
         let allowedIDs = Set(eligible.map(\.id)); recognizers = recognizers.filter { allowedIDs.contains($0.key) }
         var candidates: [(GestureRule, RecognitionProgress)] = []
+        // Partial fist evidence may block a competing pinch, but cannot authorize
+        // volume. Otherwise one occluded finger can open the picker mid-fist.
+        let fistVolume = eligible.contains { rule in
+            rule.action.kind == .volume && rule.steps.first?.pose.kind == .fist &&
+            (!rule.requireOptionKey || optionHeld) && frame.hands.count == 1 &&
+            (frame.detectedHands ?? frame.hands.count) == 1 &&
+            frame.hands[0].isFistCandidate(hand: rule.hand, minimum: rule.confidence)
+        }
         for rule in eligible {
-            if rule.action.kind.isContinuous && frame.hands.count != 1 {
+            if fistVolume && rule.action.kind == .switchApps { recognizers[rule.id] = nil; continue }
+            if rule.action.kind.isContinuous && (frame.hands.count != 1 || (rule.action.kind == .volume && (frame.detectedHands ?? frame.hands.count) != 1)) {
                 recognizers[rule.id] = nil
-                if rule.id == selected { result.progress.message = "Show one clear hand to scroll" }
+                if rule.id == selected { result.progress.message = frame.hands.isEmpty ? "No hand tracked · show your hand" : "Ambiguous hands · keep one visible" }
                 continue
             }
             if rule.requireOptionKey && !optionHeld { recognizers[rule.id] = nil; if rule.id == selected { result.progress.message = "Hold Option to use this gesture" }; continue }
@@ -198,7 +254,7 @@ struct RecognitionCoordinator {
             if rule.action.kind.isContinuous, let hand = progress.hand {
                 continuous = .init(rule: rule, hand: hand, time: frame.time)
                 continuousAccepted = false
-                result.scrollFeedback = .init(action: rule.action, amount: 0, preparing: true)
+                if rule.action.kind.isScroll { result.scrollFeedback = .init(action: rule.action, amount: 0, preparing: true) }
             } else if rule.requireNeutral { neutralRule = rule }
         }
         return result

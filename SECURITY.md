@@ -34,6 +34,33 @@ personal gesture exports, or other private data in public issues.
   take focus. Disabling its visibility does not disable any input checks. Practice
   may display scrolling feedback but cannot post scroll events.
 
+- Fist recognition may use three confidently observed joints to establish a
+  finger bend when its tip is occluded. All four non-thumb fingers still need
+  positive curl evidence at the configured confidence; missing, degenerate, or
+  straight joints cannot be assumed bent. Other pose confidence requirements
+  remain unchanged. Recognition diagnostics store only current status text in
+  memory, not images or landmark histories.
+- Fist volume arms on at least three confident observations spanning 120 ms
+  within a bounded 500 ms window. Uncertain observations never authorize movement
+  or complete arming. During a session they emit zero movement for at most 350 ms
+  since the last confident observation, and recovery resets the movement anchor. A confident opened
+  finger, missing or second hand, lost continuity, or expired uncertainty stops
+  the session. The watchdog also enforces the uncertainty deadline without frames.
+- Partial fist evidence may suppress a competing app-switch pinch only while an
+  enabled fist-volume rule is eligible for that hand, scope, and Option state.
+  At least three confident bends and no confident opened finger are required.
+  This is arbitration only: incomplete fists authorize no action.
+- Continuous volume shares the single-hand, freshness, scope, Option, editing,
+  secure-input, and cancellation gates. It starts from the observed output level;
+  Practice never calls the audio device interface. Each write rechecks output
+  identity, writable main scalar, mute, and current level. Muted outputs are never
+  written, and outputs without a supported main control fail closed. No channel,
+  balance, mute, media-key, or shell fallback is permitted. Changes are bounded by
+  elapsed time, the configured ceiling, and a per-update limit. A raised starting
+  level is not abruptly clamped. Readback precedes further writes; missing
+  acknowledgment times out. Cancellation forgets all output state. Small hardware
+  quantization is tolerated only around an outstanding request.
+
 ## Scope and limits
 
 This is a user-authorized desktop automation app, outside App Sandbox. It has

@@ -168,6 +168,17 @@ struct GestureEditor: View {
                         }
                         Text("The selected Shortcut can perform whatever actions you have configured in Shortcuts. Review it there before enabling this gesture. Only one run is started at a time.").font(.system(size: 11)).foregroundStyle(.secondary).lineSpacing(4)
                     }
+                case .volume:
+                    VStack(alignment: .leading, spacing: 19) {
+                        Picker("Movement", selection: volumeSetting(\.axis)) { ForEach(VolumeAxis.allCases, id: \.self) { Text($0.rawValue).tag($0) } }
+                        settingSlider("Sensitivity", value: volumeSetting(\.sensitivity), range: 0.25...3, display: String(format: "%.2f×", rule.action.volumeSettings.sensitivity))
+                        Toggle("Reverse direction", isOn: volumeSetting(\.reversed))
+                        settingSlider("Volume ceiling", value: volumeSetting(\.maximum), range: 0.1...1, display: "\(Int((rule.action.volumeSettings.maximum * 100).rounded()))%")
+                        settingSlider("Steadiness", value: volumeSetting(\.jitterTolerance), range: 0...0.015, display: String(format: "%.1f%%", rule.action.volumeSettings.jitterTolerance * 100))
+                        Toggle("Show Liquid Glass indicator", isOn: volumeSetting(\.showIndicator))
+                        Button("Use fist sequence") { rule.steps = GestureRule.volumePreset.steps; rule.action.volume = rule.action.volume ?? .init(); selectedStep = rule.steps.first?.id }
+                        Text("Close your fist, move to adjust the current output, then open your hand to stop. Up or right raises volume. Mute stays muted. Changing outputs or adjusting volume elsewhere stops the gesture. Outputs without a writable system volume control use their own controls. Choose your hand in Gesture and app scope in Where.").font(.system(size: 12)).foregroundStyle(.secondary).lineSpacing(4)
+                    }
                 case .scrollVertical, .scrollHorizontal:
                     VStack(alignment: .leading, spacing: 19) {
                         settingSlider("Scroll sensitivity", value: $rule.action.scrollSensitivity, range: 0.25...3, display: String(format: "%.2f×", rule.action.scrollSensitivity))
@@ -184,6 +195,9 @@ struct GestureEditor: View {
                 Text("Try it on the main screen to see the proposed action without executing it.").font(.system(size: 11)).foregroundStyle(.secondary)
             }.padding(.horizontal, 3).padding(.vertical, 5)
         }
+    }
+    private func volumeSetting<T>(_ keyPath: WritableKeyPath<VolumeSettings, T>) -> Binding<T> {
+        Binding(get: { rule.action.volumeSettings[keyPath: keyPath] }, set: { var settings = rule.action.volumeSettings; settings[keyPath: keyPath] = $0; rule.action.volume = settings })
     }
     private var scopeEditor: some View {
         VStack(alignment: .leading, spacing: 22) {

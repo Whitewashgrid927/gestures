@@ -32,3 +32,9 @@ has already performed.
 Apple-signed downloads expose the certificate holder's developer identity as
 part of Apple's signature. The source package contains no signing certificate,
 private key, account credentials, personal email, or saved user library.
+
+Volume control reads the default output's identity, volume, mute state, and writable
+control availability through Core Audio. The identity is held only in memory to
+stop a gesture when outputs change; it is not logged, exported, or saved. The app
+does not record audio or query media content. Practice volume uses synthetic data
+and never reads or writes an audio device.
