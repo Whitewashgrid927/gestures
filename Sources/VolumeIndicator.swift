@@ -41,11 +41,13 @@ private final class VolumeIndicatorPanel: NSPanel {
 @MainActor final class VolumeIndicatorController {
     private let presentation = VolumePresentation()
     private var panel: VolumeIndicatorPanel?
-    func show(_ feedback: VolumeFeedback, practicing: Bool) {
-        guard NSApp != nil else { return }
+    @discardableResult
+    func show(_ feedback: VolumeFeedback, practicing: Bool) -> Bool {
+        guard NSApp != nil else { return false }
         presentation.feedback = feedback; presentation.practicing = practicing
-        if panel?.isVisible == true { return }
-        guard let screen = NSScreen.screens.first(where: { $0.frame.contains(NSEvent.mouseLocation) }) ?? NSScreen.main else { return }
+        if panel?.isVisible == true { return true }
+        let practiceScreen = practicing ? (NSApp.keyWindow?.screen ?? NSApp.mainWindow?.screen) : nil
+        guard let screen = practiceScreen ?? NSScreen.screens.first(where: { $0.frame.contains(NSEvent.mouseLocation) }) ?? NSScreen.main else { return false }
         let frame = NSRect(x: screen.visibleFrame.maxX - 170, y: screen.visibleFrame.midY - 110, width: 144, height: 220)
         let window = panel ?? VolumeIndicatorPanel(contentRect: frame, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
         window.title = "Volume indicator"; window.isOpaque = false; window.backgroundColor = .clear
@@ -57,6 +59,7 @@ private final class VolumeIndicatorPanel: NSPanel {
             host.wantsLayer = true; host.layer?.backgroundColor = NSColor.clear.cgColor; window.contentView = host
         }
         window.setFrame(frame, display: false); panel = window; window.orderFrontRegardless()
+        return window.isVisible
     }
     func hide() { panel?.orderOut(nil); presentation.feedback = .init(); presentation.practicing = false }
 }
@@ -64,6 +67,8 @@ private final class VolumeIndicatorPanel: NSPanel {
 struct VolumeIndicatorPreviewSheet: View {
     @Environment(\.dismiss) private var dismiss
     @StateObject private var presentation = VolumePresentation()
+    @State private var indicator = VolumeIndicatorController()
+    @State private var showingIndicator = false
     var body: some View {
         VStack(alignment: .leading, spacing: 21) {
             SheetHeading(title: "A fist. A quieter moment.", subtitle: "Preview Liquid Glass without changing your sound.")
@@ -77,8 +82,14 @@ struct VolumeIndicatorPreviewSheet: View {
             }
             HStack { Text("Preview level").font(.system(size: 12)); Slider(value: $presentation.feedback.level, in: 0...1).accessibilityLabel("Preview volume level") }
             Toggle("Preview muted output", isOn: $presentation.feedback.muted).font(.system(size: 12))
+            Button(showingIndicator ? "Hide floating indicator" : "Show floating indicator") {
+                if showingIndicator { indicator.hide(); showingIndicator = false }
+                else { showingIndicator = indicator.show(presentation.feedback, practicing: true) }
+            }.buttonStyle(GlassButton())
             HStack { Text("The live indicator never captures clicks or keyboard focus.").font(.system(size: 10)).foregroundStyle(.secondary); Spacer(); Button("Done") { dismiss() }.buttonStyle(GlassButton(prominent: true)) }
         }.padding(28).frame(width: 550).background(WindowMaterial()).preferredColorScheme(.light)
             .onAppear { presentation.practicing = true }
+            .onChange(of: presentation.feedback) { _, value in if showingIndicator { indicator.show(value, practicing: true) } }
+            .onDisappear { indicator.hide() }
     }
 }

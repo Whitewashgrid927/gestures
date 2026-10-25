@@ -34,6 +34,12 @@ personal gesture exports, or other private data in public issues.
   take focus. Disabling its visibility does not disable any input checks. Practice
   may display scrolling feedback but cannot post scroll events.
 
+- Fist recognition may use three confidently observed joints to establish a
+  finger bend when its tip is occluded. All four non-thumb fingers still need
+  positive curl evidence at the configured confidence; missing, degenerate, or
+  straight joints cannot be assumed bent. Other pose confidence requirements
+  remain unchanged. Recognition diagnostics store only current status text in
+  memory, not images or landmark histories.
 - Continuous volume shares the single-hand, freshness, scope, Option, editing,
   secure-input, and cancellation gates. It starts from the observed output level;
   Practice never calls the audio device interface. Each write rechecks output

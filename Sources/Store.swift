@@ -15,6 +15,7 @@ final class TrackingPresentation: ObservableObject {
     @Published var testMatches = 0
     @Published var actionStatus = ""
     @Published var appSwitchResult = ""
+    @Published var volumeStatus = ""
     @Published var completedGestures = 0
 }
 struct EditorDraft: Identifiable { var id: UUID { rule.id }; var rule: GestureRule; var note: String = "" }
@@ -174,7 +175,7 @@ final class GestureStore: ObservableObject {
         if screenRippleReady { glassFeedbackEnabled = true; notice = "Desktop ripple is ready. Screen frames stay in memory." }
         else { notice = "Allow Gestures in System Settings → Privacy & Security → Screen & System Audio Recording. Restart Gestures if macOS asks." }
     }
-    func select(_ id: UUID) { cancelPreAction(); selectedID = id; coordinator.reset(); tracking.progress = .init(); tracking.lastMatch = ""; tracking.actionStatus = "" }
+    func select(_ id: UUID) { cancelPreAction(); selectedID = id; coordinator.reset(); tracking.progress = .init(); tracking.lastMatch = ""; tracking.actionStatus = ""; tracking.volumeStatus = "" }
     func selectProfile(_ value: String) { cancelPreAction(); selectedProfile = value; if !visibleRules.contains(where: { $0.id == selectedID }) { selectedID = visibleRules.first?.id }; coordinator.reset() }
     private func checkpoint() { history.append(library); if history.count > 40 { history.removeFirst() }; redoHistory.removeAll() }
     func save() {
@@ -287,7 +288,7 @@ final class GestureStore: ObservableObject {
         guard library.rules.contains(where: \.enabled) else { errorMessage = "Enable at least one gesture in its editor first."; return }
         if library.rules.contains(where: { $0.enabled && $0.action.kind.needsAccessibility }), !accessible { showPermissions = true; return }
         guard !ActionRunner.secureInput else { errorMessage = "A protected input field is active. Finish using it before enabling gestures."; return }
-        enabled = true; testing = false; coordinator.reset(); tracking.lastMatch = ""; tracking.actionStatus = ""
+        enabled = true; testing = false; coordinator.reset(); tracking.lastMatch = ""; tracking.actionStatus = ""; tracking.volumeStatus = ""
         if recognitionActivity == nil {
             recognitionActivity = ProcessInfo.processInfo.beginActivity(options: .userInitiatedAllowingIdleSystemSleep, reason: "Recognizing enabled hand gestures")
         }
@@ -295,7 +296,7 @@ final class GestureStore: ObservableObject {
     }
     func trySelected() {
         guard !enabled else { notice = "Mac control is on. Pause it before practicing without actions."; return }
-        disableControl(); testing.toggle(); coordinator.reset(); tracking.testMatches = 0; tracking.lastMatch = ""; tracking.actionStatus = ""
+        disableControl(); testing.toggle(); coordinator.reset(); tracking.testMatches = 0; tracking.lastMatch = ""; tracking.actionStatus = ""; tracking.volumeStatus = ""
         if !testing { notice = "Practice stopped. Mac control remains off — enable it to run actions." }
         else if !cameraRunning { notice = "Practice is ready. Start the camera when you want to try your hand gesture." }
         else { notice = "Practice only: actions are shown, never sent." }
@@ -370,6 +371,9 @@ final class GestureStore: ObservableObject {
         }
         let result = coordinator.process(frame, rules: rules, selected: selectedID, app: testing ? "test" : activeApp, optionHeld: optionHeld)
         tracking.progress = result.progress
+        if selected?.action.kind == .volume, !frame.hands.isEmpty, result.match == nil, coordinator.continuousRule == nil {
+            tracking.volumeStatus = result.progress.message
+        }
         let permission = DispatchPermission(enabled: enabled, testing: testing, cameraRunning: cameraRunning, editing: isEditing, frameAge: age, frontApp: activeApp, optionHeld: optionHeld)
         if let match = result.match {
             if match.rule.action.kind == .switchApps {
@@ -380,7 +384,7 @@ final class GestureStore: ObservableObject {
                 do {
                     if match.rule.action.kind == .volume { try volume.begin(match.rule, practicing: true, permission: permission, at: frame.time) }
                     coordinator.resolveAction(match.rule, accepted: true)
-                } catch { stopContinuous(); notice = error.localizedDescription }
+                } catch { stopContinuous(); tracking.volumeStatus = error.localizedDescription; notice = error.localizedDescription }
             }
             else {
                 tracking.completedGestures += 1
@@ -393,7 +397,7 @@ final class GestureStore: ObservableObject {
         }
         if let delta = result.volume, let rule = result.volumeRule, !preActionPending {
             do { try volume.change(delta, rule: rule, permission: permission, at: frame.time) }
-            catch { stopContinuous(); tracking.actionStatus = error.localizedDescription; notice = error.localizedDescription; return }
+            catch { stopContinuous(); tracking.volumeStatus = error.localizedDescription; tracking.actionStatus = error.localizedDescription; notice = error.localizedDescription; return }
         }
         updateContinuousFeedback(result.scrollFeedback)
     }
@@ -405,7 +409,8 @@ final class GestureStore: ObservableObject {
         if let feedback { scrollIndicator.show(feedback, practicing: testing) }
         else { scrollIndicator.hide() }
         if active.action.kind == .volume && active.action.volumeSettings.showIndicator {
-            volumeIndicator.show(volume.feedback ?? .init(maximum: active.action.volumeSettings.maximum, preparing: true), practicing: testing)
+            let shown = volumeIndicator.show(volume.feedback ?? .init(maximum: active.action.volumeSettings.maximum, preparing: true), practicing: testing)
+            tracking.volumeStatus = shown ? "Fist accepted · volume indicator shown" : "Fist accepted · no display available for indicator"
         } else { volumeIndicator.hide() }
         guard continuousWatchdog == nil else { return }
         continuousWatchdog = Task { [weak self] in
@@ -615,6 +620,7 @@ final class GestureStore: ObservableObject {
             }
         } catch {
             disableControl(); tracking.actionStatus = error.localizedDescription; errorMessage = error.localizedDescription
+            if rule.action.kind == .volume { tracking.volumeStatus = error.localizedDescription }
         }
     }
     private func spaceDidChange(at time: Double) {

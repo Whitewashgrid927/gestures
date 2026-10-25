@@ -227,6 +227,8 @@ struct TrackedHand: Sendable, Equatable {
     var confidence: Double
     var fingers: [Finger: FingerState]
     var pinchRatio: Double?
+    // Joint names that positively establish a curl; generated from geometry, never from missing data.
+    var curledEvidence: [Finger: [String]] = [:]
     func matches(_ pose: PoseDefinition, hand: HandChoice, minimum: Double) -> Bool {
         guard confidence.isFinite, confidence >= minimum, confidence <= 1, palm.finite,
               (0...1).contains(palm.x), (0...1).contains(palm.y),
@@ -236,8 +238,9 @@ struct TrackedHand: Sendable, Equatable {
             if required != .any {
                 guard fingers[finger] == required else { return false }
                 let prefix = finger == .little ? "little" : finger.rawValue.lowercased()
-                let names = finger == .thumb ? ["thumbCMC", "thumbMCP", "thumbIP", "thumbTip"] : [prefix + "MCP", prefix + "PIP", prefix + "DIP", prefix + "Tip"]
-                guard names.allSatisfy({ joints[$0].map { $0.confidence >= minimum && $0.point.finite } == true }) else { return false }
+                let fullChain = finger == .thumb ? ["thumbCMC", "thumbMCP", "thumbIP", "thumbTip"] : [prefix + "MCP", prefix + "PIP", prefix + "DIP", prefix + "Tip"]
+                let names = pose.kind == .fist && required == .curled ? curledEvidence[finger] ?? fullChain : fullChain
+                guard names.count >= 3, names.allSatisfy({ joints[$0].map { $0.confidence >= minimum && $0.point.finite } == true }) else { return false }
             }
         }
         if pose.pinchRequirement != .any, !hasPinchLandmarks(minimum: minimum) { return false }
@@ -257,6 +260,17 @@ struct TrackedHand: Sendable, Equatable {
         guard hasPinchLandmarks(minimum: minimum) else { return "Show thumb, index, and palm clearly" }
         guard pinchRatio != nil else { return "Face your palm toward the camera" }
         return "Bring thumb and index fingertips together"
+    }
+    func fistGuidance(minimum: Double) -> String {
+        for finger in [Finger.index, .middle, .ring, .little] {
+            let prefix = finger.rawValue.lowercased()
+            let evidence = curledEvidence[finger] ?? [prefix + "MCP", prefix + "PIP", prefix + "DIP", prefix + "Tip"]
+            if !evidence.allSatisfy({ joints[$0].map { $0.confidence >= minimum && $0.point.finite } == true }) {
+                return "Turn your fist slightly · show \(prefix) finger"
+            }
+            if fingers[finger] != .curled { return "Bend your \(prefix) finger into your palm" }
+        }
+        return "Hold one clear fist briefly"
     }
 }
 struct HandFrame: Sendable {

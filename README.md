@@ -39,6 +39,13 @@ Choose **Fist & slide** in the sidebar to add or select the disabled preset.
 Use **Practice only** first: close your fist with the whole hand visible, briefly
 hold the pose, then move up for louder or down for quieter. Open your hand to stop.
 Practice displays a simulated level and never reads or changes system volume.
+A fist requires four confidently measured finger bends; hidden fingertips are not
+required when the visible joints already prove the bend. Missing or uncertain bend
+evidence still blocks recognition. The camera label identifies the finger to show
+and explicitly reports when the fist is seen. **Last volume check** distinguishes
+recognition guidance from an accepted gesture and a displayed indicator.
+**Preview indicator → Show floating indicator** tests the actual floating glass
+panel with synthetic input, without using the camera or changing sound.
 Enable **Use gesture** and **Mac control** when ready for actual volume changes.
 
 **Edit gesture → Action** configures movement axis, reversal, sensitivity,

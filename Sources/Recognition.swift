@@ -52,11 +52,13 @@ struct GestureRecognizer {
                 if poseSince == nil { poseSince = frame.time; sequenceStarted = frame.time }
                 progress.fraction = min(1, (frame.time - (poseSince ?? frame.time)) / 0.12)
                 if step.pose.kind == .pinch { progress.message = "Pinch seen · keep fingers together" }
+                if step.pose.kind == .fist { progress.message = "Fist seen · keep it closed" }
                 complete = progress.fraction >= 1
                 if complete { activePose = step.pose }
             } else {
                 poseSince = nil
-                progress.message = step.pose.kind == .pinch ? (hand?.pinchGuidance(minimum: rule.confidence) ?? "Show a clear hand") : "Show \(step.pose.label.lowercased())"
+                if step.pose.kind == .fist { progress.message = hand?.fistGuidance(minimum: rule.confidence) ?? "Show a clear hand" }
+                else { progress.message = step.pose.kind == .pinch ? (hand?.pinchGuidance(minimum: rule.confidence) ?? "Show a clear hand") : "Show \(step.pose.label.lowercased())" }
             }
         case .hold:
             guard match(activePose), let hand else { reset(); return .init(message: "Hold the same pose") }
@@ -198,7 +200,7 @@ struct RecognitionCoordinator {
             if fistVolume && rule.action.kind == .switchApps { recognizers[rule.id] = nil; continue }
             if rule.action.kind.isContinuous && frame.hands.count != 1 {
                 recognizers[rule.id] = nil
-                if rule.id == selected { result.progress.message = "Show one clear hand" }
+                if rule.id == selected { result.progress.message = frame.hands.isEmpty ? "No hand tracked · show your hand" : "Two hands tracked · keep one visible" }
                 continue
             }
             if rule.requireOptionKey && !optionHeld { recognizers[rule.id] = nil; if rule.id == selected { result.progress.message = "Hold Option to use this gesture" }; continue }

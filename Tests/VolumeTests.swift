@@ -17,6 +17,42 @@ import Foundation
 
 extension GesturesTests {
     static func volumeChecks() throws {
+        // Actual geometry, rather than preclassified synthetic finger states: a closed
+        // finger can have a confident knuckle bend while its tip is hidden in the palm.
+        var joints: [String: Landmark] = ["wrist": .init(point: .init(x: 0.5, y: 0.2), confidence: 0.95)]
+        for (i, prefix) in ["index", "middle", "ring", "little"].enumerated() {
+            let x = 0.35 + Double(i) * 0.1
+            joints[prefix + "MCP"] = .init(point: .init(x: x, y: 0.4), confidence: 0.95)
+            joints[prefix + "PIP"] = .init(point: .init(x: x, y: 0.58), confidence: 0.95)
+            joints[prefix + "DIP"] = .init(point: .init(x: x + 0.04, y: 0.48), confidence: 0.95)
+            joints[prefix + "Tip"] = .init(point: .init(x: x + 0.02, y: 0.35), confidence: 0.1)
+        }
+        let fist = PoseDefinition(kind: .fist)
+        let measured = HandGeometry.measure(joints: joints, side: .right, aspect: 16.0 / 9)
+        expect(measured?.matches(fist, hand: .either, minimum: 0.55) == true, "Four confident visible bends establish a fist even with hidden fingertips")
+        var missingTips = joints
+        for prefix in ["index", "middle", "ring", "little"] { missingTips[prefix + "Tip"] = nil }
+        expect(HandGeometry.measure(joints: missingTips, side: .right, aspect: 16.0 / 9)?.matches(fist, hand: .either, minimum: 0.55) == true, "A measured fist does not require imaginary fingertip coordinates")
+        for prefix in ["index", "middle", "ring", "little"] {
+            var uncertain = joints; uncertain[prefix + "DIP"]?.confidence = 0.54
+            let value = HandGeometry.measure(joints: uncertain, side: .right, aspect: 16.0 / 9)
+            expect(value?.matches(fist, hand: .either, minimum: 0.55) == false, "A weak visible bend still blocks the fist: \(prefix)")
+            expect(value?.fistGuidance(minimum: 0.55).contains(prefix) == true, "Fist guidance identifies the finger that needs visibility: \(prefix)")
+            var straight = missingTips
+            let straightX = straight[prefix + "PIP"]!.point.x
+            straight[prefix + "DIP"]?.point = .init(x: straightX, y: 0.7)
+            expect(HandGeometry.measure(joints: straight, side: .right, aspect: 16.0 / 9)?.matches(fist, hand: .either, minimum: 0.55) == false, "Missing tip plus a straight joint is never assumed curled: \(prefix)")
+        }
+        var incomplete = missingTips; incomplete["ringDIP"] = nil
+        expect(HandGeometry.measure(joints: incomplete, side: .right, aspect: 16.0 / 9)?.matches(fist, hand: .either, minimum: 0.55) == false, "Three bent fingers are insufficient for a fist")
+        var collapsed = joints; let collapsedPoint = collapsed["indexPIP"]!.point
+        collapsed["indexDIP"]?.point = collapsedPoint; collapsed["indexTip"] = nil
+        expect(HandGeometry.measure(joints: collapsed, side: .right, aspect: 16.0 / 9)?.matches(fist, hand: .either, minimum: 0.55) == false, "Collapsed joint coordinates cannot provide bend evidence")
+        if let measured {
+            var realistic = GestureRule.volumePreset; realistic.enabled = true
+            expect(matches([1.0, 1.06, 1.13].map { .init(time: $0, hands: [measured]) }, rule: realistic) == 1,
+                   "Measured fist geometry completes the stable-pose gate")
+        }
         var rule = GestureRule.volumePreset
         expect(!rule.enabled && rule.steps.count == 1 && rule.steps[0].pose.kind == .fist, "Fist volume is opt-in with the existing brief pose stability gate")
         rule.enabled = true; _ = try rule.validated()
