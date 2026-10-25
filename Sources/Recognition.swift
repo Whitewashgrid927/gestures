@@ -101,6 +101,8 @@ struct CoordinatorResult: Sendable {
     var scroll: Point2?
     var scrollRule: GestureRule?
     var scrollFeedback: ScrollFeedback?
+    var volume: Double?
+    var volumeRule: GestureRule?
 }
 struct RecognitionCoordinator {
     private var recognizers: [UUID: GestureRecognizer] = [:]
@@ -108,7 +110,7 @@ struct RecognitionCoordinator {
     private var neutralRule: GestureRule?
     private var neutralSince: Double?
     private var activeScope = ""
-    private var continuous: ContinuousScrollSession?
+    private var continuous: ContinuousGestureSession?
     private var continuousAccepted = false
     var continuousRule: GestureRule? { continuous?.rule }
     mutating func resolveAction(_ rule: GestureRule, accepted: Bool) {
@@ -116,6 +118,7 @@ struct RecognitionCoordinator {
         if accepted {
             continuousAccepted = true
             continuous?.motion = .init(origin: active.hand.palm)
+            continuous?.volumeMotion = .init(origin: active.hand.palm)
         }
         else {
             continuous = nil; continuousAccepted = false
@@ -156,14 +159,19 @@ struct RecognitionCoordinator {
                   rules.contains(where: { $0 == active.rule && $0.enabled && ($0.scope.isGlobal || $0.scope.bundleID == app) }),
                   let pixels = active.sample(frame) else {
                 stopContinuous(at: frame.time)
-                result.progress.message = "Scrolling stopped"; return result
+                result.progress.message = active.rule.action.kind == .volume ? "Volume stopped" : "Scrolling stopped"; return result
             }
+            let volume = active.rule.action.kind == .volume
             if continuousAccepted {
-                result.scroll = active.rule.action.kind == .scrollVertical ? .init(x: 0, y: pixels) : .init(x: pixels, y: 0)
-                result.scrollRule = active.rule
+                if volume { result.volume = pixels; result.volumeRule = active.rule }
+                else {
+                    result.scroll = active.rule.action.kind == .scrollVertical ? .init(x: 0, y: pixels) : .init(x: pixels, y: 0)
+                    result.scrollRule = active.rule
+                }
             }
-            result.scrollFeedback = .init(action: active.rule.action, amount: continuousAccepted ? pixels : 0, preparing: !continuousAccepted)
-            result.progress = .init(step: active.rule.steps.count - 1, fraction: 1, message: continuousAccepted ? "Move to scroll · release to stop" : "Preparing scroll…", hand: active.hand)
+            if !volume { result.scrollFeedback = .init(action: active.rule.action, amount: continuousAccepted ? pixels : 0, preparing: !continuousAccepted) }
+            let instruction = volume ? "Move to adjust volume · open your hand to stop" : "Move to scroll · release to stop"
+            result.progress = .init(step: active.rule.steps.count - 1, fraction: 1, message: continuousAccepted ? instruction : (volume ? "Preparing volume…" : "Preparing scroll…"), hand: active.hand)
             continuous = active
             return result
         }
@@ -179,10 +187,18 @@ struct RecognitionCoordinator {
             .sorted { !$0.scope.isGlobal && $1.scope.isGlobal }
         let allowedIDs = Set(eligible.map(\.id)); recognizers = recognizers.filter { allowedIDs.contains($0.key) }
         var candidates: [(GestureRule, RecognitionProgress)] = []
+        // A closed fist can also bring thumb and index together. Give an enabled fist
+        // volume rule precedence over the less-specific opening pinch, without changing saved poses.
+        let fistVolume = eligible.contains { rule in
+            rule.action.kind == .volume && rule.steps.first?.pose.kind == .fist &&
+            (!rule.requireOptionKey || optionHeld) && frame.hands.count == 1 &&
+            frame.hands[0].matches(rule.steps[0].pose, hand: rule.hand, minimum: rule.confidence)
+        }
         for rule in eligible {
+            if fistVolume && rule.action.kind == .switchApps { recognizers[rule.id] = nil; continue }
             if rule.action.kind.isContinuous && frame.hands.count != 1 {
                 recognizers[rule.id] = nil
-                if rule.id == selected { result.progress.message = "Show one clear hand to scroll" }
+                if rule.id == selected { result.progress.message = "Show one clear hand" }
                 continue
             }
             if rule.requireOptionKey && !optionHeld { recognizers[rule.id] = nil; if rule.id == selected { result.progress.message = "Hold Option to use this gesture" }; continue }
@@ -198,7 +214,7 @@ struct RecognitionCoordinator {
             if rule.action.kind.isContinuous, let hand = progress.hand {
                 continuous = .init(rule: rule, hand: hand, time: frame.time)
                 continuousAccepted = false
-                result.scrollFeedback = .init(action: rule.action, amount: 0, preparing: true)
+                if rule.action.kind.isScroll { result.scrollFeedback = .init(action: rule.action, amount: 0, preparing: true) }
             } else if rule.requireNeutral { neutralRule = rule }
         }
         return result

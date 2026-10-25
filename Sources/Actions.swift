@@ -7,7 +7,7 @@ struct PlannedKey: Equatable, Sendable {
     var code: UInt16
     var command = false; var option = false; var control = false; var shift = false
 }
-enum ActionPlan: Equatable, Sendable { case key(PlannedKey), shortcut(String), continuous, appPicker }
+enum ActionPlan: Equatable, Sendable { case key(PlannedKey), shortcut(String), continuous, appPicker, volume }
 enum ActionPlanner {
     static func plan(_ action: GestureAction) -> ActionPlan {
         switch action.kind {
@@ -18,6 +18,7 @@ enum ActionPlanner {
         case .keyboard: return .key(.init(code: action.key.code, command: action.key.command, option: action.key.option, control: action.key.control, shift: action.key.shift))
         case .shortcut: return .shortcut(action.shortcutName)
         case .scrollVertical, .scrollHorizontal: return .continuous
+        case .volume: return .volume
         case .switchApps: return .appPicker
         }
     }
@@ -172,6 +173,7 @@ final class ActionRunner {
             }
             completion("Running \(name)")
         case .continuous: lastAction = now; completion("Scrolling · release the pose to stop")
+        case .volume: throw GestureError("Volume changes require an active volume session.")
         case .appPicker: throw GestureError("Choose an app in the pinch-and-slide picker before switching.")
         }
         return true
@@ -196,7 +198,7 @@ final class ActionRunner {
     }
     @discardableResult
     func scroll(_ delta: Point2, rule: GestureRule, permission: DispatchPermission) -> Bool {
-        guard permission.allows(rule), rule.action.kind.isContinuous, !Self.secureInput, Self.hasAccess, delta.finite,
+        guard permission.allows(rule), rule.action.kind.isScroll, !Self.secureInput, Self.hasAccess, delta.finite,
               NSWorkspace.shared.frontmostApplication?.bundleIdentifier == permission.frontApp else { return false }
         let x = Int32(max(-45, min(45, delta.x)).rounded()), y = Int32(max(-45, min(45, delta.y)).rounded())
         if x == 0 && y == 0 { return true }

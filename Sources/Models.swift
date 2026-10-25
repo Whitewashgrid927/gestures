@@ -75,12 +75,13 @@ struct GestureStep: Identifiable, Codable, Equatable, Sendable {
 }
 
 enum ActionKind: String, Codable, CaseIterable, Sendable {
-    case nextSpace = "Next Space", previousSpace = "Previous Space", missionControl = "Mission Control", appWindows = "App windows", keyboard = "Keyboard shortcut", shortcut = "macOS Shortcut", scrollVertical = "Vertical scroll", scrollHorizontal = "Horizontal scroll", switchApps = "Switch apps"
+    case nextSpace = "Next Space", previousSpace = "Previous Space", missionControl = "Mission Control", appWindows = "App windows", keyboard = "Keyboard shortcut", shortcut = "macOS Shortcut", scrollVertical = "Vertical scroll", scrollHorizontal = "Horizontal scroll", switchApps = "Switch apps", volume = "Output volume"
     var isSpaceSwitch: Bool { self == .nextSpace || self == .previousSpace }
-    var isContinuous: Bool { self == .scrollVertical || self == .scrollHorizontal }
-    var needsAccessibility: Bool { self != .shortcut }
+    var isScroll: Bool { self == .scrollVertical || self == .scrollHorizontal }
+    var isContinuous: Bool { isScroll || self == .volume }
+    var needsAccessibility: Bool { self != .shortcut && self != .volume }
     var symbol: String {
-        switch self { case .nextSpace, .previousSpace: return "rectangle.on.rectangle"; case .missionControl, .appWindows: return "square.grid.2x2"; case .keyboard: return "keyboard"; case .shortcut: return "square.stack.3d.up"; case .scrollVertical: return "arrow.up.arrow.down"; case .scrollHorizontal: return "arrow.left.arrow.right"; case .switchApps: return "app.badge.checkmark" }
+        switch self { case .nextSpace, .previousSpace: return "rectangle.on.rectangle"; case .missionControl, .appWindows: return "square.grid.2x2"; case .keyboard: return "keyboard"; case .shortcut: return "square.stack.3d.up"; case .scrollVertical: return "arrow.up.arrow.down"; case .scrollHorizontal: return "arrow.left.arrow.right"; case .switchApps: return "app.badge.checkmark"; case .volume: return "speaker.wave.2" }
     }
 }
 struct AppSwitcherSettings: Codable, Equatable, Sendable {
@@ -119,6 +120,8 @@ struct GestureAction: Codable, Equatable, Sendable {
     // Optional for libraries saved before app switching was introduced.
     var appSwitcher: AppSwitcherSettings?
     var switcherSettings: AppSwitcherSettings { appSwitcher ?? .init() }
+    var volume: VolumeSettings?
+    var volumeSettings: VolumeSettings { volume ?? .init() }
     var title: String {
         switch kind { case .keyboard: return key.display; case .shortcut: return shortcutName.isEmpty ? "Choose a Shortcut" : shortcutName; default: return kind.rawValue }
     }
@@ -155,9 +158,10 @@ struct GestureRule: Identifiable, Codable, Equatable, Sendable {
             if step.kind == .release && index != steps.count - 1 { throw GestureError("Release must be the last step.") }
             if step.kind == .pose && step.pose.kind == .custom && Finger.allCases.allSatisfy({ step.pose.requirement($0) == .any }) && step.pose.pinchRequirement == .any { throw GestureError("Choose at least one finger or pinch condition for a custom pose.") }
         }
-        if action.kind.isContinuous && steps.contains(where: { $0.kind == .release }) { throw GestureError("Continuous scrolling stops when you release the final pose. Remove the Release step.") }
+        if action.kind.isContinuous && steps.contains(where: { $0.kind == .release }) { throw GestureError("Continuous actions stop when you release the final pose. Remove the Release step.") }
         if let settings = action.appSwitcher { _ = try settings.validated() }
         if let settings = action.scrolling { _ = try settings.validated() }
+        if let settings = action.volume { _ = try settings.validated() }
         if action.kind == .switchApps {
             _ = try action.switcherSettings.validated()
             guard steps.last(where: { $0.kind == .pose })?.pose.pinchRequirement == .touching,
@@ -175,7 +179,13 @@ struct GestureRule: Identifiable, Codable, Equatable, Sendable {
         var left = Self(name: "Swipe left")
         var right = Self(name: "Swipe right"); right.steps[2].direction = .right; right.action.kind = .previousSpace
         left.action.kind = .nextSpace
-        return [left, right, twoFingerScrollPreset, appSwitcherPreset]
+        return [left, right, twoFingerScrollPreset, appSwitcherPreset, volumePreset]
+    }
+    static var volumePreset: Self {
+        var rule = Self(name: "Fist & slide", enabled: false)
+        rule.steps = [.init(kind: .pose, pose: .init(kind: .fist))]
+        rule.action.kind = .volume; rule.action.volume = .init()
+        return rule
     }
     static var twoFingerScrollPreset: Self {
         var rule = Self(name: "Two-finger scroll", enabled: false)

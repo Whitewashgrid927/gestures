@@ -43,6 +43,9 @@ final class GestureStore: ObservableObject {
     @Published var showScrollPreview = false {
         didSet { if showScrollPreview { disableControl(); testing = false } }
     }
+    @Published var showVolumePreview = false {
+        didSet { if showVolumePreview { disableControl(); testing = false } }
+    }
     @Published var errorMessage: String?
     @Published var notice = "Make a gesture your own."
     @Published var accessible = ActionRunner.hasAccess
@@ -68,7 +71,9 @@ final class GestureStore: ObservableObject {
     private var pendingAppSwitch = false
     private let appPicker = AppPickerController()
     private let scrollIndicator = ScrollIndicatorController()
-    private var scrollWatchdog: Task<Void, Never>?
+    private let volumeIndicator = VolumeIndicatorController()
+    private let volume = VolumeController()
+    private var continuousWatchdog: Task<Void, Never>?
     private var appSwitch: AppSwitchSession?
     private var appSwitchWatchdog: Task<Void, Never>?
     private var expectedApp: AppSwitchTarget?
@@ -102,7 +107,7 @@ final class GestureStore: ObservableObject {
         var seen: Set<String> = []
         return library.rules.map(\.scope).filter { !$0.isGlobal && seen.insert($0.bundleID).inserted }.sorted { $0.display < $1.display }
     }
-    var isEditing: Bool { editor != nil || showFineTune || showGlassAppearance || showAppSwitcherPreview || showScrollPreview }
+    var isEditing: Bool { editor != nil || showFineTune || showGlassAppearance || showAppSwitcherPreview || showScrollPreview || showVolumePreview }
     var cameraRunning: Bool { cameraStatus == .running }
     var controlMode: ControlMode { .resolve(cameraRunning: cameraRunning, enabled: enabled, testing: testing) }
     var canCheckSpace: Bool {
@@ -223,11 +228,18 @@ final class GestureStore: ObservableObject {
     }
     func addTwoFingerScrollPreset() {
         disableControl(); testing = false
-        if let existing = library.rules.first(where: { $0.action.kind.isContinuous && $0.steps.first?.pose.kind == .victory }) {
+        if let existing = library.rules.first(where: { $0.action.kind.isScroll && $0.steps.first?.pose.kind == .victory }) {
             selectedProfile = "*"; select(existing.id)
         } else { update(.twoFingerScrollPreset) }
-        guard selected?.action.kind.isContinuous == true else { return }
+        guard selected?.action.kind.isScroll == true else { return }
         notice = "Raise two fingers, move to scroll, then relax your fingers to stop. Try Practice first."
+    }
+    func addVolumePreset() {
+        disableControl(); testing = false
+        if let existing = library.rules.first(where: { $0.action.kind == .volume && $0.steps.first?.pose.kind == .fist }) {
+            selectedID = existing.id; selectedProfile = "*"
+        } else { update(.volumePreset) }
+        notice = "Close your fist, move to change volume, then open your hand to stop. Try Practice first."
     }
     func duplicateSelected() {
         guard var rule = selected else { return }; rule.id = UUID(); rule.name = String((rule.name + " copy").prefix(80)); rule.enabled = false
@@ -344,7 +356,7 @@ final class GestureStore: ObservableObject {
         guard age >= 0, age < 0.35 else { cancelPreAction(); coordinator.reset(); return }
         lastFrameAt = frame.time; tracking.frame = frame
         if recording { if recordedFrames.count < 160 { recordedFrames.append(frame) }; return }
-        guard !isEditing, testing || enabled else { stopScrolling(); tracking.progress = .init(message: frame.hands.isEmpty ? "Preview only · show your hand" : "Hand detected · Mac control is off"); return }
+        guard !isEditing, testing || enabled else { stopContinuous(); tracking.progress = .init(message: frame.hands.isEmpty ? "Preview only · show your hand" : "Hand detected · Mac control is off"); return }
         if manualSpaceCheck { tracking.progress = .init(message: "Checking the Space shortcut"); return }
         if ActionRunner.secureInput { disableControl(); notice = "Control paused while protected input is active."; return }
         let activeApp = frontApp
@@ -365,7 +377,10 @@ final class GestureStore: ObservableObject {
             } else if testing {
                 tracking.testMatches += 1; tracking.lastMatch = "Would run: \(match.rule.action.title)"
                 // Simulate continuous feedback in Practice; the runner remains gated off.
-                coordinator.resolveAction(match.rule, accepted: true)
+                do {
+                    if match.rule.action.kind == .volume { try volume.begin(match.rule, practicing: true, permission: permission, at: frame.time) }
+                    coordinator.resolveAction(match.rule, accepted: true)
+                } catch { stopContinuous(); notice = error.localizedDescription }
             }
             else {
                 tracking.completedGestures += 1
@@ -374,34 +389,41 @@ final class GestureStore: ObservableObject {
             }
         }
         if let delta = result.scroll, let rule = result.scrollRule, !testing, !preActionPending {
-            guard runner.scroll(delta, rule: rule, permission: permission) else { stopScrolling(); return }
+            guard runner.scroll(delta, rule: rule, permission: permission) else { stopContinuous(); return }
         }
-        updateScrollIndicator(result.scrollFeedback)
+        if let delta = result.volume, let rule = result.volumeRule, !preActionPending {
+            do { try volume.change(delta, rule: rule, permission: permission, at: frame.time) }
+            catch { stopContinuous(); tracking.actionStatus = error.localizedDescription; notice = error.localizedDescription; return }
+        }
+        updateContinuousFeedback(result.scrollFeedback)
     }
-    private func updateScrollIndicator(_ feedback: ScrollFeedback?) {
-        guard coordinator.continuousRule != nil else {
-            if scrollWatchdog != nil && preActionPending { cancelPreAction() } else { stopScrolling() }
+    private func updateContinuousFeedback(_ feedback: ScrollFeedback?) {
+        guard let active = coordinator.continuousRule else {
+            if continuousWatchdog != nil && preActionPending { cancelPreAction() } else { stopContinuous() }
             return
         }
         if let feedback { scrollIndicator.show(feedback, practicing: testing) }
         else { scrollIndicator.hide() }
-        guard scrollWatchdog == nil else { return }
-        scrollWatchdog = Task { [weak self] in
+        if active.action.kind == .volume && active.action.volumeSettings.showIndicator {
+            volumeIndicator.show(volume.feedback ?? .init(maximum: active.action.volumeSettings.maximum, preparing: true), practicing: testing)
+        } else { volumeIndicator.hide() }
+        guard continuousWatchdog == nil else { return }
+        continuousWatchdog = Task { [weak self] in
             while !Task.isCancelled {
                 try? await Task.sleep(for: .milliseconds(50))
                 guard !Task.isCancelled, let self, let rule = self.coordinator.continuousRule else { return }
                 let age = ProcessInfo.processInfo.systemUptime - self.lastFrameAt
                 let option = CGEventSource.flagsState(.combinedSessionState).contains(.maskAlternate)
                 if age < 0 || age > 0.25 || !self.cameraRunning || self.isEditing || ActionRunner.secureInput ||
-                    (rule.requireOptionKey && !option) || (!self.testing && (!self.enabled || !ActionRunner.hasAccess)) {
-                    self.cancelPreAction(); self.tracking.progress = .init(message: "Scrolling stopped"); return
+                    (rule.requireOptionKey && !option) || (!self.testing && (!self.enabled || (rule.action.kind.needsAccessibility && !ActionRunner.hasAccess))) {
+                    self.cancelPreAction(); self.tracking.progress = .init(message: "Continuous action stopped"); return
                 }
             }
         }
     }
-    private func stopScrolling() {
+    private func stopContinuous() {
         coordinator.stopContinuous(at: ProcessInfo.processInfo.systemUptime)
-        scrollWatchdog?.cancel(); scrollWatchdog = nil; scrollIndicator.hide()
+        continuousWatchdog?.cancel(); continuousWatchdog = nil; scrollIndicator.hide(); volume.cancel(); volumeIndicator.hide()
     }
     private func beginAppSwitch(_ rule: GestureRule, frame: HandFrame, permission: DispatchPermission) {
         guard !preActionPending, !spaceCheckPending, !manualSpaceCheck, appSwitch == nil,
@@ -568,6 +590,12 @@ final class GestureStore: ObservableObject {
             tracking.actionStatus = "Sending \(rule.action.title)…"
         }
         do {
+            if rule.action.kind == .volume {
+                try volume.begin(rule, practicing: false, permission: permission, at: lastFrameAt)
+                coordinator.resolveAction(rule, accepted: true)
+                tracking.actionStatus = "Volume ready · open your hand to stop"
+                return
+            }
             let sent = try runner.execute(rule, permission: permission) { [weak self] text in
                 self?.notice = text; self?.tracking.actionStatus = text
             }
@@ -590,7 +618,7 @@ final class GestureStore: ObservableObject {
         }
     }
     private func spaceDidChange(at time: Double) {
-        stopScrolling()
+        stopContinuous()
         guard spaceCheck.observed(at: time) else { return }
         spaceTimeout?.cancel(); spaceTimeout = nil; spaceCheckPending = false
         if manualSpaceCheck { coordinator.reset() }
@@ -606,7 +634,7 @@ final class GestureStore: ObservableObject {
         spaceCheckWindow = nil; spaceCheckWindowWasActive = false
     }
     private func cancelPreAction() {
-        stopScrolling()
+        stopContinuous()
         cancelAppSwitch()
         let wasPending = preActionPending
         if wasPending && pendingAppSwitch { tracking.appSwitchResult = "Switch cancelled because the input context changed."; Self.switchLog.info("Pending app switch cancelled by context change") }

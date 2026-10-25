@@ -33,6 +33,7 @@ struct MainView: View {
         .sheet(isPresented: $store.showGlassAppearance) { GlassAppearanceSheet(store: store) }
         .sheet(isPresented: $store.showAppSwitcherPreview) { AppSwitcherPreviewSheet() }
         .sheet(isPresented: $store.showScrollPreview) { ScrollIndicatorPreviewSheet() }
+        .sheet(isPresented: $store.showVolumePreview) { VolumeIndicatorPreviewSheet() }
         .alert("Something needs attention", isPresented: Binding(get: { store.errorMessage != nil }, set: { if !$0 { store.errorMessage = nil } })) { Button("OK") { store.errorMessage = nil } } message: { Text(store.errorMessage ?? "") }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in store.refreshPermissions() }
     }
@@ -70,6 +71,7 @@ struct MainView: View {
             Button { store.newGesture() } label: { Label("New gesture", systemImage: "plus.circle").font(.system(size: 13)).frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 26).padding(.vertical, 7) }.buttonStyle(.plain)
             Button { store.addAppSwitcherPreset() } label: { Label("Pinch & slide", systemImage: "hand.pinch").font(.system(size: 12)).frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 26).padding(.vertical, 7) }.buttonStyle(.plain).help("Add or select the configurable app switcher")
             Button { store.addTwoFingerScrollPreset() } label: { Label("Two-finger scroll", systemImage: "arrow.up.and.down").font(.system(size: 12)).frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 26).padding(.vertical, 7) }.buttonStyle(.plain).help("Add or select configurable two-finger scrolling")
+            Button { store.addVolumePreset() } label: { Label("Fist & slide", systemImage: "speaker.wave.2").font(.system(size: 12)).frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 26).padding(.vertical, 7) }.buttonStyle(.plain).help("Add or select configurable volume control")
             Spacer(minLength: 24)
             Menu {
                 Button("All profiles") { store.selectProfile("*") }
@@ -146,7 +148,7 @@ struct MainView: View {
                 Button("Preview picker") { store.showAppSwitcherPreview = true }.buttonStyle(.plain).font(.system(size: 12))
             }
             if store.selected?.action.kind.isContinuous == true {
-                Button("Preview indicator") { store.showScrollPreview = true }.buttonStyle(.plain).font(.system(size: 12))
+                Button("Preview indicator") { if store.selected?.action.kind == .volume { store.showVolumePreview = true } else { store.showScrollPreview = true } }.buttonStyle(.plain).font(.system(size: 12))
             }
             Spacer()
             Menu {

@@ -53,17 +53,18 @@ struct ScrollFeedback: Equatable, Sendable {
     var intensity: Double { min(1, abs(amount) / 32) }
 }
 
-struct ContinuousScrollSession {
+struct ContinuousGestureSession {
     let rule: GestureRule
     let pose: PoseDefinition
     var hand: TrackedHand
     var time: Double
     var knownSide: HandChoice
     var motion: ScrollMotion
+    var volumeMotion: VolumeMotion
     init(rule: GestureRule, hand: TrackedHand, time: Double) {
         self.rule = rule; self.hand = hand; self.time = time; knownSide = hand.side
         pose = rule.steps.last(where: { $0.kind == .pose })?.pose ?? .init()
-        motion = .init(origin: hand.palm)
+        motion = .init(origin: hand.palm); volumeMotion = .init(origin: hand.palm)
     }
     mutating func sample(_ frame: HandFrame) -> Double? {
         guard frame.hands.count == 1, let next = frame.hands.first,
@@ -71,7 +72,9 @@ struct ContinuousScrollSession {
               knownSide == .either || next.side == .either || next.side == knownSide,
               frame.time > time, frame.time - time <= 0.25,
               (next.palm - hand.palm).length < 0.15 else { return nil }
-        let pixels = motion.sample(next.palm, elapsed: frame.time - time, action: rule.action)
+        let pixels = rule.action.kind == .volume
+            ? volumeMotion.sample(next.palm, elapsed: frame.time - time, settings: rule.action.volumeSettings)
+            : motion.sample(next.palm, elapsed: frame.time - time, action: rule.action)
         if next.side != .either { knownSide = next.side }
         hand = next; time = frame.time
         return pixels

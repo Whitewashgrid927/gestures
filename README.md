@@ -13,7 +13,7 @@ A native Mac prototype for defining your own camera-based hand gestures and assi
 - If you select a specific camera, it must be available when capture starts. Gestures asks you to reconnect it or choose another device instead of silently opening a different camera. **System default** remains available as an explicit choice.
 - Accessibility permission for keyboard, Space-switching, and scrolling actions. Test mode does not need that permission.
 
-Version 0.3.0 adds [two-finger scrolling](#two-finger-scrolling) with a native Liquid Glass indicator, alongside pinch-and-slide app switching and configurable Space gestures. Raise two fingers, move your hand to scroll, then relax your fingers to stop. A locally built app uses ad-hoc signing unless you supply an identity.
+This source version adds [fist-and-slide volume control](#fist--slide-for-volume) with a native Liquid Glass indicator. The published download above remains 0.3.0 until the next release. A locally built app uses ad-hoc signing unless you supply an identity.
 
 ## First use
 
@@ -32,6 +32,41 @@ Start the camera and enable **Mac control**, then choose **Run in background** o
 Use the hand icon in the macOS menu bar to pause or resume Mac control, stop the camera, reopen the configuration window, or quit. The menu also shows the latest completed gesture/action when available. Pausing stops actions while retaining the camera; **Stop camera** stops both. Quitting releases any pending synthetic keys and stops the camera.
 
 Closing the window during preview or practice, with Mac control off, still stops the camera. Background operation does not start capture on launch or bypass sleep, screen-lock, protected-input, camera-health, or permission checks. Live control holds a process-activity token so the app can keep recognizing gestures with its window closed; that token allows normal idle system sleep and ends when control stops.
+
+## Fist & slide for volume
+
+Choose **Fist & slide** in the sidebar to add or select the disabled preset.
+Use **Practice only** first: close your fist with the whole hand visible, briefly
+hold the pose, then move up for louder or down for quieter. Open your hand to stop.
+Practice displays a simulated level and never reads or changes system volume.
+Enable **Use gesture** and **Mac control** when ready for actual volume changes.
+
+**Edit gesture → Action** configures movement axis, reversal, sensitivity,
+steadiness, indicator visibility, and a volume ceiling (80% by default).
+**Gesture**, **Where**, and **Fine-tune** retain hand choice, app scope, confidence,
+cooldown, neutral rearming, and the optional Option-key clutch. Presets do not
+replace existing definitions. The native `NSGlassEffectView` indicator shows the
+read-back volume and ceiling without taking focus or intercepting clicks.
+
+Live control starts from the current output volume without a jump. It never
+unmutes, changes balance, or writes to a muted output. Motion is limited to
+2.5 percentage points per update and 35 points per second, with no inertia or
+queued movement. A starting volume above your ceiling is left unchanged until
+you move downward. The ceiling limits the requested system volume; it is not a
+sound-pressure or hearing-safety measurement, and hardware may round values.
+
+Volume uses Core Audio's writable main output scalar. Outputs without that
+control (including some HDMI, digital, and external devices) are rejected with
+an explanation; use their own controls or choose another output. There is no
+media-key or shell fallback. Output changes, mute changes, external volume
+adjustments, invalid readback, and driver errors stop the session. Small hardware
+rounding near an outstanding request cannot be distinguished from a small external
+adjustment. Device identity exists only in memory while checking the output.
+
+The same single-hand continuity, freshness, protected-input, scope, Option-key,
+sleep, editing, and pause gates apply as for scrolling. When Desktop ripple is
+on, it finishes before volume control starts; movement during it is discarded.
+Volume itself does not require Accessibility. Other enabled actions still do.
 
 ## Two-finger scrolling
 
@@ -142,7 +177,7 @@ During live recognition, the feedback separates **gesture completed** from **sho
 Choose **New gesture** or **Edit gesture**. The editor has three tabs:
 
 - **Gesture:** choose either hand or a specific hand. Start with a pose, then combine up to ten steps: poses, holds, movement in eight directions, and an optional final release. A Custom pose lets you set each finger to Straight, Bent, or Any, plus a thumb/index pinch condition. Movement distance, deadline, and hold time are editable. Hold is optional: for a simpler swipe, use Open palm followed directly by Move left or Move right. Even without a Hold step, the starting pose must remain stable for 120 milliseconds, and the movement-distance, direction, confidence, cooldown, and neutral-hand checks still apply. Multiple Move steps create a path, such as left then up.
-- **Action:** select Next/Previous Space, Mission Control, App windows, a recorded keyboard shortcut, a named macOS Shortcut, or continuous horizontal/vertical scrolling. The keyboard recorder listens only while its field is focused. It does not install a global keyboard recorder.
+- **Action:** select Next/Previous Space, Mission Control, App windows, a recorded keyboard shortcut, a named macOS Shortcut, continuous horizontal/vertical scrolling, app switching, or output volume. The keyboard recorder listens only while its field is focused. It does not install a global keyboard recorder.
 - **Where:** use the gesture in all apps or only when a chosen app is in front. App-specific rules win when multiple rules finish together; one discrete action fires. Scope does not create a separate active profile switch—the sidebar filters which rules you see.
 
 **Use gesture** controls whether that definition participates in live control. New gestures start disabled. Main-window **Mac control** controls the entire engine. Test mode always tests the selected definition, including disabled rules and rules scoped to another app.
@@ -175,7 +210,7 @@ A configured macOS Shortcut can access data, use the network, or change files ac
 
 Recognition uses 2D hand landmarks and deterministic pose/movement rules. It does not recognize full-body gestures, simultaneous two-hand choreography, depth, arbitrary drawing shapes, or learned arbitrary gestures. Finger classification works best with one entire hand visible, palm toward the camera, in even lighting. Confidence, occlusion, fast movement, physical hand differences, and camera angle affect recognition. Continuous scrolling is relative hand motion, not pointer control.
 
-The automated checks cover recognition, dispatch gates, persistence, import review, and synthetic GPU rendering. They do not post input events or start a camera. Live hand recognition, permission revocation, Shortcuts, scrolling, and target-app behavior need hands-on testing on each supported configuration.
+The automated checks cover recognition, dispatch gates, persistence, import review, and synthetic GPU rendering. They do not post input events, change system volume, or start a camera. Live hand recognition, permission revocation, Shortcuts, scrolling, audio-device behavior, and target-app behavior need hands-on testing on each supported configuration.
 
 ## Build and test
 

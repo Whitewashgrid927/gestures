@@ -34,6 +34,17 @@ personal gesture exports, or other private data in public issues.
   take focus. Disabling its visibility does not disable any input checks. Practice
   may display scrolling feedback but cannot post scroll events.
 
+- Continuous volume shares the single-hand, freshness, scope, Option, editing,
+  secure-input, and cancellation gates. It starts from the observed output level;
+  Practice never calls the audio device interface. Each write rechecks output
+  identity, writable main scalar, mute, and current level. Muted outputs are never
+  written, and outputs without a supported main control fail closed. No channel,
+  balance, mute, media-key, or shell fallback is permitted. Changes are bounded by
+  elapsed time, the configured ceiling, and a per-update limit. A raised starting
+  level is not abruptly clamped. Readback precedes further writes; missing
+  acknowledgment times out. Cancellation forgets all output state. Small hardware
+  quantization is tolerated only around an outstanding request.
+
 ## Scope and limits
 
 This is a user-authorized desktop automation app, outside App Sandbox. It has
