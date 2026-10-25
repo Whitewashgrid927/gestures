@@ -5,6 +5,20 @@ import CoreMedia
 struct CameraChoice: Identifiable, Sendable { var id: String; var name: String }
 enum CameraStatus: Sendable, Equatable { case off, starting, running, failed(String) }
 
+enum CameraSelection {
+    static func select<Device>(requestedID: String?, devices: [Device], id: (Device) -> String,
+                               defaultDevice: @autoclosure () -> Device?) throws -> Device {
+        if let requestedID {
+            guard let selected = devices.first(where: { id($0) == requestedID }) else {
+                throw GestureError("The selected camera is unavailable. Reconnect it or choose another camera in Camera & permissions.")
+            }
+            return selected
+        }
+        guard let fallback = defaultDevice() else { throw GestureError("No camera is available. Connect one and try again.") }
+        return fallback
+    }
+}
+
 /// All session setup and frame processing are serialized on this private queue.
 /// Only landmark values cross to the main actor; pixel buffers are not retained.
 final class CameraPipeline: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate, @unchecked Sendable {
@@ -31,7 +45,8 @@ final class CameraPipeline: NSObject, AVCaptureVideoDataOutputSampleBufferDelega
             onStatus(generation, .starting)
             do {
                 let choices = AVCaptureDevice.DiscoverySession(deviceTypes: [.builtInWideAngleCamera, .external, .continuityCamera], mediaType: .video, position: .unspecified).devices
-                guard let device = choices.first(where: { $0.uniqueID == deviceID }) ?? AVCaptureDevice.default(for: .video) else { throw GestureError("No camera is available. Connect one and try again.") }
+                let device = try CameraSelection.select(requestedID: deviceID, devices: choices, id: \.uniqueID,
+                                                        defaultDevice: AVCaptureDevice.default(for: .video))
                 session.beginConfiguration()
                 for input in session.inputs { session.removeInput(input) }
                 for output in session.outputs { session.removeOutput(output) }

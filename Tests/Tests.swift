@@ -35,6 +35,50 @@ struct GesturesTests {
         var recognizer = GestureRecognizer()
         return frames.filter { recognizer.process($0, rule: rule).matched }.count
     }
+    static func withUnavailableStorage(_ storage: URL, perform action: () -> Void) throws {
+        let backup = storage.appendingPathExtension("test-backup")
+        try FileManager.default.moveItem(at: storage, to: backup)
+        do { try Data("Blocked directory fixture".utf8).write(to: storage) }
+        catch { try FileManager.default.moveItem(at: backup, to: storage); throw error }
+        defer {
+            try? FileManager.default.removeItem(at: storage)
+            try? FileManager.default.moveItem(at: backup, to: storage)
+        }
+        action()
+    }
+    static func persistenceFailureChecks(in temp: URL) throws {
+        for operation in ["edit", "delete", "undo", "redo", "import"] {
+            let store = GestureStore(storage: temp.appendingPathComponent("FailedSave-" + operation), observeSystem: false)
+            var changed = store.selected!; changed.name = "Saved change"
+            store.update(changed)
+            if operation == "redo" { store.undo() }
+            let before = store.library, selectedBefore = store.selectedID
+            let undoBefore = store.canUndo, redoBefore = store.canRedo
+            let input = temp.appendingPathComponent("failure-import.gestures")
+            try LibraryIO.save(.init(rules: [GestureRule(name: "Imported fixture")]), to: input)
+            func apply() {
+                switch operation {
+                case "edit": var rule = store.selected!; rule.name = "Retried edit"; store.update(rule)
+                case "delete": store.removeSelected()
+                case "undo": store.undo()
+                case "redo": store.redo()
+                default: store.importLibrary(at: input)
+                }
+            }
+            try withUnavailableStorage(store.storage, perform: apply)
+            expect(store.library == before && store.selectedID == selectedBefore && store.canUndo == undoBefore && store.canRedo == redoBefore,
+                   "Failed \(operation) preserves the library, selection, and undo/redo history")
+            expect(store.errorMessage != nil && !store.notice.hasPrefix("Imported ") && !store.enabled,
+                   "Failed \(operation) reports failure with control off and no import-success claim")
+            let onDisk = try LibraryIO.load(store.storage.appendingPathComponent("Library.gestures"))
+            expect(onDisk == before, "Failed \(operation) leaves the saved library intact")
+            apply()
+            let retried = try LibraryIO.load(store.storage.appendingPathComponent("Library.gestures"))
+            expect(store.library != before && store.library == retried && store.errorMessage == nil,
+                   "Retrying \(operation) succeeds after storage recovers and clears the old error")
+            if operation == "import" { expect(store.library.rules.last?.enabled == false, "A retried import still arrives disabled") }
+        }
+    }
     static func main() throws {
         let rule = GestureRule.examples[0]
         _ = try GestureLibrary().validated()
@@ -181,6 +225,18 @@ struct GesturesTests {
         let temp = FileManager.default.temporaryDirectory.appendingPathComponent("GesturesTests-" + UUID().uuidString)
         try FileManager.default.createDirectory(at: temp, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: temp) }
+        try persistenceFailureChecks(in: temp)
+        let cameraFixtures = [CameraChoice(id: "fixture.front", name: "Front camera"), CameraChoice(id: "fixture.desk", name: "Desk camera")]
+        let explicitCamera = try CameraSelection.select(requestedID: "fixture.desk", devices: cameraFixtures, id: \.id, defaultDevice: cameraFixtures[0])
+        expect(explicitCamera.id == "fixture.desk", "An explicit camera selection wins over the system default")
+        let automaticCamera = try CameraSelection.select(requestedID: nil, devices: cameraFixtures, id: \.id, defaultDevice: cameraFixtures[0])
+        expect(automaticCamera.id == "fixture.front", "System default is used when no camera was explicitly selected")
+        rejects("A missing selected camera cannot silently open another camera") {
+            _ = try CameraSelection.select(requestedID: "fixture.missing", devices: cameraFixtures, id: \.id, defaultDevice: cameraFixtures[0])
+        }
+        rejects("An unavailable system default fails without starting a camera") {
+            _ = try CameraSelection.select(requestedID: nil, devices: cameraFixtures, id: \.id, defaultDevice: nil)
+        }
         let file = temp.appendingPathComponent("roundtrip.gestures"), original = GestureLibrary()
         try LibraryIO.save(original, to: file)
         let restored = try LibraryIO.load(file)
@@ -239,6 +295,19 @@ struct GesturesTests {
         expect(ControlMode.resolve(cameraRunning: true, enabled: true, testing: true) == .testing, "Test mode takes precedence in status presentation")
         expect(ControlMode.resolve(cameraRunning: true, enabled: true, testing: false) == .live, "Enabled live control is distinct from preview")
         store.checkSpaceAction(); expect(!store.enabled && !store.spaceCheckPending, "Manual Space check cannot dispatch with camera and control off")
+        var rejectedCheck = DispatchPermission(enabled: true, testing: false, cameraRunning: true, editing: false, frameAge: 0.4, frontApp: "test")
+        store.dispatchManualSpaceCheck(rule, permission: rejectedCheck)
+        expect(!store.manualSpaceCheck && !store.spaceCheckPending && !store.preActionPending,
+               "A stale-frame rejection leaves manual Space-check mode instead of blocking recognition")
+        rejectedCheck.frameAge = 0.01
+        var clutchCheck = rule; clutchCheck.requireOptionKey = true
+        store.dispatchManualSpaceCheck(clutchCheck, permission: rejectedCheck)
+        expect(!store.manualSpaceCheck && !store.spaceCheckPending && !store.preActionPending,
+               "Releasing the Option clutch during manual preparation clears the checking latch")
+        var scopedCheck = rule; scopedCheck.scope.bundleID = "com.example.other"
+        store.dispatchManualSpaceCheck(scopedCheck, permission: rejectedCheck)
+        expect(!store.manualSpaceCheck && !store.spaceCheckPending && !store.preActionPending,
+               "A manual check rejected by app scope cannot freeze recognition")
         var check = SpaceChangeCheck()
         expect(!check.observed(at: 10), "Unrelated Space changes cannot be claimed as action success")
         check.begin(at: 10); expect(!check.observed(at: 9), "Earlier Space event cannot confirm a later action")

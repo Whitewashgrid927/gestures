@@ -10,6 +10,7 @@ A native Mac prototype for defining your own camera-based hand gestures and assi
 
 - An Apple-silicon Mac running macOS 26 or newer.
 - A camera for live recognition. Camera access is requested only when you choose **Start camera**.
+- If you select a specific camera, it must be available when capture starts. Gestures asks you to reconnect it or choose another device instead of silently opening a different camera. **System default** remains available as an explicit choice.
 - Accessibility permission for keyboard, Space-switching, and scrolling actions. Test mode does not need that permission.
 
 Version 0.1.12 is distributed directly through GitHub. A locally built app uses ad-hoc signing unless you supply an identity.
@@ -83,6 +84,8 @@ For continuous scrolling, complete the sequence and keep its final pose while mo
 ## Save and share definitions
 
 Definitions are saved locally in `~/Library/Application Support/Gestures/Library.gestures`. Export/import is available in the sidebar menu and the Gestures menu. Imported rules receive new IDs and are always disabled for review. Imports are validated, limited to 2 MB and 100 total rules, and cannot run an action by being opened. Undo/Redo reverses gesture edits in the current session.
+
+Edits, deletions, imports, and undo/redo take effect only after their save succeeds. If storage is unavailable, the library, selection, and undo/redo history stay unchanged, Mac control pauses, and the app reports the failure. Restore access and retry the operation; a successful retry clears the earlier save error.
 
 Exports contain names, poses, action bindings, Shortcut names, and chosen app bundle IDs/names. Review these before sharing because you choose those values. They do not contain camera frames, hand recordings, camera device IDs, credentials, or local home-directory paths.
 

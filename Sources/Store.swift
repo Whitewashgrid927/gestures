@@ -70,7 +70,7 @@ final class GestureStore: ObservableObject {
     private var recognitionActivity: NSObjectProtocol?
     private var spaceCheck = SpaceChangeCheck()
     private var spaceTimeout: Task<Void, Never>?
-    private var manualSpaceCheck = false
+    private(set) var manualSpaceCheck = false
     private var manualSpaceTask: Task<Void, Never>?
     private weak var spaceCheckWindow: NSWindow?
     private var spaceCheckWindowWasActive = false
@@ -153,7 +153,7 @@ final class GestureStore: ObservableObject {
     private func checkpoint() { history.append(library); if history.count > 40 { history.removeFirst() }; redoHistory.removeAll() }
     func save() {
         do { try saveNow(); notice = "Saved on this Mac." }
-        catch { errorMessage = error.localizedDescription; disableControl() }
+        catch { saveFailed(error) }
     }
     func saveNow() throws { try persist(library) }
     private func persist(_ value: GestureLibrary) throws {
@@ -163,17 +163,24 @@ final class GestureStore: ObservableObject {
             recoveryRequired = false
         }
         try LibraryIO.save(value, to: storage.appendingPathComponent("Library.gestures"))
+        errorMessage = nil
+    }
+    private func saveFailed(_ error: Error) {
+        disableControl()
+        errorMessage = error.localizedDescription
+        notice = "Changes could not be saved. Your last saved library has been kept."
     }
     func update(_ rule: GestureRule) {
+        disableControl()
         do {
             _ = try rule.validated()
             if !library.rules.contains(where: { $0.id == rule.id }), library.rules.count >= 100 { throw GestureError("This library already has 100 gestures.") }
             var candidate = library
             if let i = candidate.rules.firstIndex(where: { $0.id == rule.id }) { candidate.rules[i] = rule } else { candidate.rules.append(rule) }
             try persist(candidate)
-            disableControl(); checkpoint(); library = candidate
+            checkpoint(); library = candidate
             selectedID = rule.id; selectedProfile = "*"; coordinator.reset(); notice = "Saved on this Mac."; editor = nil
-        } catch { errorMessage = error.localizedDescription }
+        } catch { saveFailed(error) }
     }
     func setAction(_ kind: ActionKind) {
         guard var rule = selected else { return }
@@ -190,10 +197,30 @@ final class GestureStore: ObservableObject {
         rule.steps = rule.steps.map { var step = $0; step.id = UUID(); return step }; update(rule)
     }
     func removeSelected() {
-        guard let selectedID else { return }; disableControl(); checkpoint(); library.rules.removeAll { $0.id == selectedID }; self.selectedID = library.rules.first?.id; coordinator.reset(); save()
+        guard let selectedID else { return }; disableControl()
+        var candidate = library; candidate.rules.removeAll { $0.id == selectedID }
+        do {
+            try persist(candidate)
+            checkpoint(); library = candidate; self.selectedID = library.rules.first?.id
+            notice = "Saved on this Mac."
+        } catch { saveFailed(error) }
     }
-    func undo() { guard let last = history.popLast() else { return }; disableControl(); redoHistory.append(library); library = last; selectedID = library.rules.first?.id; save() }
-    func redo() { guard let last = redoHistory.popLast() else { return }; disableControl(); history.append(library); library = last; selectedID = library.rules.first?.id; save() }
+    func undo() {
+        guard let last = history.last else { return }; disableControl()
+        do {
+            try persist(last)
+            history.removeLast(); redoHistory.append(library); library = last; selectedID = library.rules.first?.id
+            notice = "Saved on this Mac."
+        } catch { saveFailed(error) }
+    }
+    func redo() {
+        guard let last = redoHistory.last else { return }; disableControl()
+        do {
+            try persist(last)
+            redoHistory.removeLast(); history.append(library); library = last; selectedID = library.rules.first?.id
+            notice = "Saved on this Mac."
+        } catch { saveFailed(error) }
+    }
     func disableControl() {
         enabled = false; coordinator.reset(); runner.cancelAll(); cancelSpaceCheck(); cancelPreAction()
         if let recognitionActivity { ProcessInfo.processInfo.endActivity(recognitionActivity); self.recognitionActivity = nil }
@@ -315,12 +342,16 @@ final class GestureStore: ObservableObject {
             self.manualSpaceTask = nil
             guard self.enabled, !self.testing, self.cameraRunning, self.selected?.id == rule.id else { self.cancelSpaceCheck(); return }
             let permission = DispatchPermission(enabled: self.enabled, testing: self.testing, cameraRunning: self.cameraRunning, editing: self.isEditing, frameAge: ProcessInfo.processInfo.systemUptime - self.lastFrameAt, frontApp: self.frontApp, optionHeld: CGEventSource.flagsState(.combinedSessionState).contains(.maskAlternate))
-            self.spaceCheckPending = false
-            self.dispatch(rule, permission: permission)
+            self.dispatchManualSpaceCheck(rule, permission: permission)
         }
     }
-    private func dispatch(_ rule: GestureRule, permission: DispatchPermission) {
-        guard !preActionPending, permission.allows(rule), !ActionRunner.secureInput else { coordinator.resolveAction(rule, accepted: false); return }
+    func dispatchManualSpaceCheck(_ rule: GestureRule, permission: DispatchPermission) {
+        manualSpaceCheck = true; spaceCheckPending = false
+        if !dispatch(rule, permission: permission) { cancelSpaceCheck() }
+    }
+    @discardableResult
+    private func dispatch(_ rule: GestureRule, permission: DispatchPermission) -> Bool {
+        guard !preActionPending, permission.allows(rule), !ActionRunner.secureInput else { coordinator.resolveAction(rule, accepted: false); return false }
         let id = UUID(); preActionID = id; preActionPending = true
         let recognizedAt = lastFrameAt
         desktopRipple.beforeAction(GlassFeedbackCue(rule: rule), frameAge: permission.frameAge) { [weak self] proceed in
@@ -336,6 +367,7 @@ final class GestureStore: ObservableObject {
             }
             self.executeAction(rule, permission: current)
         }
+        return true
     }
     private func executeAction(_ rule: GestureRule, permission: DispatchPermission) {
         if rule.action.kind.isSpaceSwitch {
@@ -432,7 +464,9 @@ final class GestureStore: ObservableObject {
         disableControl()
         do {
             let imported = try LibraryIO.load(url), merged = try LibraryIO.merging(imported, into: library)
-            checkpoint(); library = merged; selectedProfile = "*"; selectedID = library.rules.last?.id; save(); notice = "Imported \(imported.rules.count) gestures, all disabled. Review them in the editor."
-        } catch { errorMessage = error.localizedDescription }
+            try persist(merged)
+            checkpoint(); library = merged; selectedProfile = "*"; selectedID = library.rules.last?.id
+            notice = "Imported \(imported.rules.count) gestures, all disabled. Review them in the editor."
+        } catch { saveFailed(error) }
     }
 }
