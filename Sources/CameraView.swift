@@ -78,6 +78,9 @@ struct TestFeedback: View {
             Text(tracking.lastMatch.isEmpty ? (testing ? "Practice only · no actions are sent" : "Complete every step to run the action") : tracking.lastMatch)
                 .font(.system(size: 11, weight: .medium)).foregroundStyle(tracking.lastMatch.isEmpty ? Color.secondary : .blue)
             if !testing && !tracking.actionStatus.isEmpty { Text(tracking.actionStatus).font(.system(size: 11, weight: .medium)).foregroundStyle(.secondary) }
+            if rule?.action.kind == .switchApps, !tracking.appSwitchResult.isEmpty {
+                Text("Last switch: \(tracking.appSwitchResult)").font(.system(size: 11, weight: .medium)).foregroundStyle(.secondary)
+            }
         }.frame(maxWidth: .infinity).padding(12).liquidPanel(radius: 15)
     }
 }

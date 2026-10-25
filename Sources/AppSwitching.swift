@@ -45,6 +45,7 @@ struct AppSwitchSession {
     private(set) var direction: MoveDirection?
     private(set) var finished = false
     private var previousHand: TrackedHand?
+    private var trackedSide: HandChoice
     private var filteredX: Double
     private var anchorX: Double
     private var releaseSince: Double?
@@ -71,6 +72,7 @@ struct AppSwitchSession {
         self.rule = rule; self.targets = targets; self.sourceApp = sourceApp; self.practicing = practicing
         sourcePID = currentPID
         startedAt = frame.time; lastFrameAt = frame.time; previousHand = hand
+        trackedSide = hand.side
         filteredX = hand.palm.x; anchorX = hand.palm.x
         selectedIndex = targets.firstIndex(where: { $0.id == currentPID }) ?? 0
     }
@@ -78,6 +80,7 @@ struct AppSwitchSession {
     mutating func pauseTracking() {
         guard !finished else { return }
         awaitingOpenHand = true; trackingPaused = true; previousHand = nil
+        trackedSide = .either
         releaseSince = nil; confirmSince = nil; uncertainSince = nil
     }
     private mutating func anchor(at hand: TrackedHand) {
@@ -95,8 +98,14 @@ struct AppSwitchSession {
               hand.matches(.init(kind: .any), hand: rule.hand, minimum: rule.confidence) else {
             pauseTracking(); return .browsing
         }
-        if let previousHand, (previousHand.side != .either && hand.side != previousHand.side) || (hand.palm - previousHand.palm).length >= 0.15 {
+        if let previousHand, (hand.palm - previousHand.palm).length >= 0.15 {
             pauseTracking(); return .browsing
+        }
+        // Vision may omit handedness while fingertips overlap. Retain the last
+        // known side so unknown does not look like a new hand or hide a real swap.
+        if hand.side != .either {
+            guard trackedSide == .either || hand.side == trackedSide else { pauseTracking(); return .browsing }
+            trackedSide = hand.side
         }
         previousHand = hand
         let apart = PoseDefinition(kind: .custom, thumb: .any, index: .any, middle: .any, ring: .any, little: .any, pinch: .apart)

@@ -13,7 +13,7 @@ A native Mac prototype for defining your own camera-based hand gestures and assi
 - If you select a specific camera, it must be available when capture starts. Gestures asks you to reconnect it or choose another device instead of silently opening a different camera. **System default** remains available as an explicit choice.
 - Accessibility permission for keyboard, Space-switching, and scrolling actions. Test mode does not need that permission.
 
-This source builds version 0.2.2 with the persistent pinch-and-slide app picker. The download link above currently points to the published 0.1.12 release. A locally built app uses ad-hoc signing unless you supply an identity.
+This source builds version 0.2.3 with the persistent pinch-and-slide app picker. The download link above currently points to the published 0.1.12 release. A locally built app uses ad-hoc signing unless you supply an identity.
 
 ## First use
 
@@ -68,6 +68,10 @@ sleep, a foreground-app change, or cancellation clears both picker and pending a
 Tracking loss pauses selection without allowing stale input to trigger an action.
 No app list, process identifiers, icons, or activation history are written to disk;
 only explicitly configured app bundle IDs are saved with the rule.
+
+The **Last switch** result remains visible between attempts so a new picker cannot
+hide an activation failure. Local system diagnostics record only fixed stage names
+and Practice status, without app names, process IDs, hand coordinates, or images.
 
 ## Desktop ripple
 

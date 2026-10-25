@@ -69,6 +69,18 @@ extension GesturesTests {
         var sensitiveRule = rule; sensitiveRule.action.appSwitcher?.distancePerApp = 0.04
         var sensitive = session(sensitiveRule); move(&sensitive)
         expect(sensitive.selectedIndex == 2, "Configured travel distance changes selection sensitivity")
+        var unknownSide = session()
+        for i in 1...3 {
+            var tracked = hand(0.5 + Double(i)*0.04); tracked.side = .either
+            _ = unknownSide.process(.init(time: unknownSide.lastFrameAt + 0.05, hands: [tracked]), app: "com.example.source", optionHeld: true, allowed: true)
+        }
+        expect(unknownSide.selectedIndex == 1 && !unknownSide.trackingPaused, "Unknown handedness does not interrupt continuous, confident one-hand browsing")
+        expect(confirm(&unknownSide) == .commit(targets[1]), "A confirmed pinch still works after Vision temporarily omits handedness")
+        var changedSide = session()
+        var unknown = hand(0.5); unknown.side = .either
+        _ = changedSide.process(.init(time: changedSide.lastFrameAt + 0.05, hands: [unknown]), app: "com.example.source", optionHeld: true, allowed: true)
+        _ = changedSide.process(.init(time: changedSide.lastFrameAt + 0.05, hands: [hand(0.5, side: .left)]), app: "com.example.source", optionHeld: true, allowed: true)
+        expect(changedSide.trackingPaused, "An unknown frame cannot conceal an actual known-side hand swap")
 
         for reason in ["backwards time", "app changed", "paused", "Option released"] {
             var clutched = rule; clutched.requireOptionKey = true

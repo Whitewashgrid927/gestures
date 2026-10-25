@@ -184,7 +184,13 @@ final class ActionRunner {
         guard let app = target.runningApplication else { throw GestureError("That app is no longer running. Try the gesture again.") }
         let now = ProcessInfo.processInfo.systemUptime
         guard now - lastAction >= 0.3 else { return false }
-        let accepted = app.activate(options: [])
+        let accepted: Bool
+        if NSRunningApplication.current.isActive, let application = NSApp {
+            application.yieldActivation(to: app)
+            accepted = app.activate(from: .current, options: [.activateAllWindows])
+        } else {
+            accepted = app.activate(options: [.activateAllWindows])
+        }
         if accepted { lastAction = now }
         return accepted
     }

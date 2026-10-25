@@ -3,6 +3,7 @@ import Combine
 import Foundation
 @preconcurrency import AVFoundation
 import UniformTypeIdentifiers
+import OSLog
 
 extension UTType { static let gesturesLibrary = UTType(exportedAs: "org.gestures.studio.library", conformingTo: .json) }
 
@@ -13,12 +14,14 @@ final class TrackingPresentation: ObservableObject {
     @Published var lastMatch = ""
     @Published var testMatches = 0
     @Published var actionStatus = ""
+    @Published var appSwitchResult = ""
     @Published var completedGestures = 0
 }
 struct EditorDraft: Identifiable { var id: UUID { rule.id }; var rule: GestureRule; var note: String = "" }
 
 @MainActor
 final class GestureStore: ObservableObject {
+    private static let switchLog = Logger(subsystem: "org.gestures.studio", category: "AppSwitch")
     @Published private(set) var library = GestureLibrary()
     @Published var selectedID: UUID?
     @Published var selectedProfile = "*"
@@ -59,6 +62,7 @@ final class GestureStore: ObservableObject {
     @Published private(set) var screenRippleReady = false
     @Published private(set) var preActionPending = false
     private var preActionID = UUID()
+    private var pendingAppSwitch = false
     private let appPicker = AppPickerController()
     private var appSwitch: AppSwitchSession?
     private var appSwitchWatchdog: Task<Void, Never>?
@@ -372,6 +376,7 @@ final class GestureStore: ObservableObject {
             self?.cancelAppSwitch(); self?.tracking.actionStatus = "Cancelled · no app switched"
         }) else { coordinator.finishInteractiveAction(rule, at: frame.time); return }
         appSwitch = session
+        Self.switchLog.info("Picker opened; practice=\(self.testing, privacy: .public)")
         tracking.lastMatch = testing ? "Practice app picker" : "App picker opened"
         tracking.actionStatus = "Release, slide to browse, then pinch again to choose"
         appSwitchWatchdog = Task { [weak self] in
@@ -381,6 +386,8 @@ final class GestureStore: ObservableObject {
                 let now = ProcessInfo.processInfo.systemUptime
                 if now - session.startedAt > session.rule.action.switcherSettings.timeout ||
                     self.frontApp != session.sourceApp || ActionRunner.secureInput || (!session.practicing && !ActionRunner.hasAccess) {
+                    Self.switchLog.info("Picker closed by timeout or context/permission change")
+                    self.tracking.appSwitchResult = "Picker closed before a confirming pinch."
                     self.cancelAppSwitch(); self.notice = "App picker cancelled. No app was switched."; return
                 }
                 if now - session.lastFrameAt > 0.35 {
@@ -397,18 +404,25 @@ final class GestureStore: ObservableObject {
         let allowed = unchanged && !isEditing && cameraRunning && !recording && !ActionRunner.secureInput &&
             (session.practicing ? testing : current.allows(session.rule) && ActionRunner.hasAccess)
         let result = session.process(frame, app: frontApp, optionHeld: optionHeld, allowed: allowed)
+        if session.selectedIndex != appSwitch?.selectedIndex { Self.switchLog.info("Picker selection advanced") }
+        if session.trackingPaused, appSwitch?.trackingPaused == false { Self.switchLog.info("Picker input paused") }
+        if !session.awaitingOpenHand, appSwitch?.awaitingOpenHand == true { Self.switchLog.info("Picker ready for browsing") }
         appSwitch = session
         switch result {
         case .browsing:
             appPicker.update(session)
             tracking.progress = .init(step: session.rule.steps.count - 1, fraction: 1, message: session.instruction, hand: frame.hands.first)
         case .cancelled:
+            Self.switchLog.info("Picker cancelled by input or permission gate")
             cancelAppSwitch(); tracking.actionStatus = "Cancelled · no app switched"
         case .commit(let target):
+            Self.switchLog.info("Picker second pinch confirmed")
             cancelAppSwitch()
             if session.practicing {
                 tracking.testMatches += 1; tracking.lastMatch = "Would switch to \(target.name)"; tracking.actionStatus = "Practice only · no app switched"
+                tracking.appSwitchResult = "Practice would switch to \(target.name)."
             } else {
+                tracking.appSwitchResult = "Confirmed \(target.name) · preparing switch…"
                 tracking.completedGestures += 1; tracking.lastMatch = "\(session.rule.name) completed"
                 dispatch(session.rule, permission: current, appTarget: target, direction: session.direction)
             }
@@ -423,7 +437,9 @@ final class GestureStore: ObservableObject {
         appActivationTimeout?.cancel(); appActivationTimeout = nil; expectedApp = nil
         if target.runningApplication?.isActive == true {
             tracking.actionStatus = "Switched to \(target.name)"; notice = tracking.actionStatus
-        } else { tracking.actionStatus = "App switching cancelled because the active app changed." }
+            Self.switchLog.info("App activation verified")
+        } else { tracking.actionStatus = "App switching cancelled because the active app changed."; Self.switchLog.info("App activation interrupted by another active app") }
+        tracking.appSwitchResult = tracking.actionStatus
     }
     func checkSpaceAction() {
         guard canCheckSpace, let rule = selected else { notice = "Enable Mac control to check a Space action. Practice mode never sends actions."; return }
@@ -445,39 +461,58 @@ final class GestureStore: ObservableObject {
     }
     @discardableResult
     private func dispatch(_ rule: GestureRule, permission: DispatchPermission, appTarget: AppSwitchTarget? = nil, direction: MoveDirection? = nil) -> Bool {
-        guard !preActionPending, permission.allows(rule), !ActionRunner.secureInput else { coordinator.resolveAction(rule, accepted: false); return false }
+        guard !preActionPending, permission.allows(rule), !ActionRunner.secureInput else {
+            if appTarget != nil { tracking.appSwitchResult = "Switch blocked before the ripple: control or input changed."; Self.switchLog.info("App switch blocked before ripple") }
+            coordinator.resolveAction(rule, accepted: false); return false
+        }
         guard rule.action.kind != .switchApps || appTarget != nil else { return false }
         let id = UUID(); preActionID = id; preActionPending = true
+        pendingAppSwitch = appTarget != nil
         let recognizedAt = lastFrameAt
         var cue = GlassFeedbackCue(rule: rule)
         if let direction { cue.direction = direction }
         desktopRipple.beforeAction(cue, frameAge: permission.frameAge) { [weak self] proceed in
             guard let self, self.preActionID == id else { return }
             self.preActionPending = false
-            guard proceed else { self.coordinator.resolveAction(rule, accepted: false); self.cancelSpaceCheck(); return }
+            self.pendingAppSwitch = false
+            guard proceed else {
+                if appTarget != nil { self.tracking.appSwitchResult = "Switch cancelled with the ripple."; Self.switchLog.info("App switch cancelled with ripple") }
+                self.coordinator.resolveAction(rule, accepted: false); self.cancelSpaceCheck(); return
+            }
             let now = ProcessInfo.processInfo.systemUptime
             let current = DispatchPermission(enabled: self.enabled, testing: self.testing, cameraRunning: self.cameraRunning,
                 editing: self.isEditing, frameAge: now - self.lastFrameAt, frontApp: self.frontApp, optionHeld: CGEventSource.flagsState(.combinedSessionState).contains(.maskAlternate))
             guard PreActionInput.isFresh(recognizedAt: recognizedAt, latestFrameAt: self.lastFrameAt, now: now),
                   current.allows(rule), current.frontApp == permission.frontApp, !ActionRunner.secureInput else {
+                if appTarget != nil { self.tracking.appSwitchResult = "Switch blocked: input or active app changed during the ripple."; Self.switchLog.info("App switch blocked after ripple") }
                 self.coordinator.resolveAction(rule, accepted: false); self.cancelSpaceCheck(); self.notice = "Action cancelled because input changed during the ripple."; return
             }
             if let appTarget, rule.action.kind == .switchApps {
                 do {
-                    guard self.library.rules.contains(rule) else { return }
+                    guard self.library.rules.contains(rule) else { self.tracking.appSwitchResult = "Switch cancelled because the gesture changed."; Self.switchLog.info("App switch blocked by changed rule"); return }
                     self.expectedApp = appTarget
                     guard try self.runner.activate(appTarget, rule: rule, permission: current) else {
-                        self.expectedApp = nil; self.tracking.actionStatus = "macOS did not accept the app switch."; return
+                        self.expectedApp = nil; self.tracking.actionStatus = "macOS did not accept the app switch."
+                        self.tracking.appSwitchResult = self.tracking.actionStatus; Self.switchLog.info("App activation request rejected"); return
                     }
                     self.tracking.actionStatus = "Switch requested: \(appTarget.name)"
+                    self.tracking.appSwitchResult = self.tracking.actionStatus
+                    Self.switchLog.info("App activation request accepted")
                     self.appActivationTimeout?.cancel()
                     self.appActivationTimeout = Task { [weak self] in
                         try? await Task.sleep(for: .seconds(1))
                         guard !Task.isCancelled, let self, self.expectedApp == appTarget else { return }
                         if appTarget.runningApplication?.isActive == true { self.confirmAppActivation() }
-                        else { self.expectedApp = nil; self.tracking.actionStatus = "Switch requested · app activation was not confirmed" }
+                        else {
+                            self.expectedApp = nil; self.tracking.actionStatus = "Switch requested · app activation was not confirmed"
+                            self.tracking.appSwitchResult = self.tracking.actionStatus; Self.switchLog.info("App activation was not confirmed")
+                        }
                     }
-                } catch { self.expectedApp = nil; self.disableControl(); self.errorMessage = error.localizedDescription }
+                } catch {
+                    self.expectedApp = nil; self.tracking.appSwitchResult = error.localizedDescription
+                    Self.switchLog.info("App activation rejected by final safety check")
+                    self.disableControl(); self.errorMessage = error.localizedDescription
+                }
             } else { self.executeAction(rule, permission: current) }
         }
         return true
@@ -530,6 +565,8 @@ final class GestureStore: ObservableObject {
     private func cancelPreAction() {
         cancelAppSwitch()
         let wasPending = preActionPending
+        if wasPending && pendingAppSwitch { tracking.appSwitchResult = "Switch cancelled because the input context changed."; Self.switchLog.info("Pending app switch cancelled by context change") }
+        pendingAppSwitch = false
         coordinator.cancelPendingAction()
         preActionID = UUID(); preActionPending = false
         desktopRipple.cancel()
