@@ -176,7 +176,7 @@ struct GestureRule: Identifiable, Codable, Equatable, Sendable {
     }
     static var appSwitcherPreset: Self {
         var rule = Self(name: "Pinch & slide", enabled: false)
-        rule.steps = [.init(kind: .pose, pose: .init(kind: .pinch)), .init(kind: .slide, distance: 0.04)]
+        rule.steps = [.init(kind: .pose, pose: .init(kind: .pinch))]
         rule.action.kind = .switchApps; rule.action.appSwitcher = .init()
         return rule
     }
@@ -221,15 +221,23 @@ struct TrackedHand: Sendable, Equatable {
                 guard names.allSatisfy({ joints[$0].map { $0.confidence >= minimum && $0.point.finite } == true }) else { return false }
             }
         }
-        if pose.pinchRequirement != .any {
-            guard ["thumbTip", "indexTip", "indexMCP", "littleMCP"].allSatisfy({ joints[$0].map { $0.confidence >= minimum && $0.point.finite } == true }) else { return false }
-        }
+        if pose.pinchRequirement != .any, !hasPinchLandmarks(minimum: minimum) { return false }
         switch pose.pinchRequirement {
         case .touching: guard let pinchRatio, pinchRatio.isFinite, pinchRatio >= 0, pinchRatio < 0.32 else { return false }
         case .apart: guard let pinchRatio, pinchRatio.isFinite, pinchRatio > 0.48 else { return false }
         case .any: break
         }
         return true
+    }
+    private func hasPinchLandmarks(minimum: Double) -> Bool {
+        ["thumbTip", "indexTip", "indexMCP", "littleMCP"].allSatisfy {
+            joints[$0].map { $0.confidence >= minimum && $0.point.finite } == true
+        }
+    }
+    func pinchGuidance(minimum: Double) -> String {
+        guard hasPinchLandmarks(minimum: minimum) else { return "Show thumb, index, and palm clearly" }
+        guard pinchRatio != nil else { return "Face your palm toward the camera" }
+        return "Bring thumb and index fingertips together"
     }
 }
 struct HandFrame: Sendable {

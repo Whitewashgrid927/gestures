@@ -210,7 +210,7 @@ final class GestureStore: ObservableObject {
             selectedProfile = "*"; select(existing.id)
         } else { update(.appSwitcherPreset) }
         guard selected?.action.kind == .switchApps else { return }
-        notice = "Pinch, then slide sideways. Try Practice first; Edit gesture configures apps and sensitivity."
+        notice = "Pinch to open the picker, slide to browse, then open your pinch to choose. Try Practice first."
     }
     func duplicateSelected() {
         guard var rule = selected else { return }; rule.id = UUID(); rule.name = String((rule.name + " copy").prefix(80)); rule.enabled = false

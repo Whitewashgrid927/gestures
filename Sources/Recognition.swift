@@ -51,9 +51,13 @@ struct GestureRecognizer {
             if match(step.pose) {
                 if poseSince == nil { poseSince = frame.time; sequenceStarted = frame.time }
                 progress.fraction = min(1, (frame.time - (poseSince ?? frame.time)) / 0.12)
+                if step.pose.kind == .pinch { progress.message = "Pinch seen · keep fingers together" }
                 complete = progress.fraction >= 1
                 if complete { activePose = step.pose }
-            } else { poseSince = nil; progress.message = "Show \(step.pose.label.lowercased())" }
+            } else {
+                poseSince = nil
+                progress.message = step.pose.kind == .pinch ? (hand?.pinchGuidance(minimum: rule.confidence) ?? "Show a clear hand") : "Show \(step.pose.label.lowercased())"
+            }
         case .hold:
             guard match(activePose), let hand else { reset(); return .init(message: "Hold the same pose") }
             if anchor == nil { anchor = hand.palm; stepStarted = frame.time }

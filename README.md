@@ -13,7 +13,7 @@ A native Mac prototype for defining your own camera-based hand gestures and assi
 - If you select a specific camera, it must be available when capture starts. Gestures asks you to reconnect it or choose another device instead of silently opening a different camera. **System default** remains available as an explicit choice.
 - Accessibility permission for keyboard, Space-switching, and scrolling actions. Test mode does not need that permission.
 
-This source builds version 0.2.0 with the pinch-and-slide app picker. The download link above currently points to the published 0.1.12 release. A locally built app uses ad-hoc signing unless you supply an identity.
+This source builds version 0.2.1 with the pinch-and-slide app picker. The download link above currently points to the published 0.1.12 release. A locally built app uses ad-hoc signing unless you supply an identity.
 
 ## First use
 
@@ -36,8 +36,8 @@ Closing the window during preview or practice, with Mac control off, still stops
 ## Pinch & slide to switch apps
 
 Choose **Pinch & slide** in the sidebar to add or select the disabled preset. Start
-the camera and use **Practice only** first. Pinch your thumb and index finger, then
-move sideways to open the native Liquid Glass app picker. Keep pinching and slide
+the camera and use **Practice only** first. Pinch your thumb and index finger to
+open the native Liquid Glass app picker. Keep pinching and slide
 left or right to highlight an app. Open the pinch for a brief, confidently tracked
 release to choose it. Lowering the hand, losing tracking, showing a second hand,
 or leaving the current app cancels instead. Releasing without browsing also cancels.

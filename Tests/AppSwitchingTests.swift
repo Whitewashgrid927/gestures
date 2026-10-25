@@ -6,18 +6,22 @@ extension GesturesTests {
         _ = try preset.validated()
         expect(!preset.enabled && preset.action.kind == .switchApps, "The app-switcher preset starts disabled")
         expect(ActionPlanner.plan(preset.action) == .appPicker, "App switching requires the picker instead of synthesizing a shortcut")
+        let pinchFrames = (0..<10).map { HandFrame(time: 1 + Double($0)*0.05, hands: [hand(pose: .pinch)]) }
+        expect(matches(Array(pinchFrames.prefix(3)), rule: preset) == 0, "A brief pinch still cannot pass the 120 ms stability check")
+        expect(matches(Array(pinchFrames.prefix(4)), rule: preset) == 1, "A stable pinch opens the picker without a hidden movement gate")
+        var deliberate = preset; deliberate.steps.append(.init(kind: .slide, distance: 0.04))
         for direction in [MoveDirection.left, .right] {
-            var live = preset; live.enabled = true
+            var live = deliberate; live.enabled = true
             var coordinator = RecognitionCoordinator(); var opened = 0
             for frame in swipeFrames(direction: direction, pose: .pinch) {
                 if coordinator.process(frame, rules: [live], selected: live.id, app: "test", optionHeld: false).match != nil { opened += 1 }
             }
-            expect(opened == 1, "A deliberate pinch slide opens the picker once from either side: \(direction)")
+            expect(opened == 1, "An optional sideways entry step opens the picker once from either side: \(direction)")
         }
-        expect(matches(swipeFrames(direction: .up, pose: .pinch), rule: preset) == 0, "Vertical pinch movement cannot open the app picker")
+        expect(matches(swipeFrames(direction: .up, pose: .pinch), rule: deliberate) == 0, "An optional sideways entry rejects vertical movement")
         expect(matches(swipeFrames(direction: .left, pose: .open), rule: preset) == 0, "Open-palm Space swipes cannot open the app picker")
         let still = (0..<100).map { HandFrame(time: 1 + Double($0)*0.05, hands: [hand(0.5 + sin(Double($0))*0.008, pose: .pinch)]) }
-        expect(matches(still, rule: preset) == 0, "Pinch jitter without a deliberate slide cannot open the picker")
+        expect(matches(still, rule: deliberate) == 0, "An optional sideways entry rejects pinch jitter")
 
         let targets = (0..<3).map { AppSwitchTarget(id: Int32(770001 + $0), bundleID: "com.example.fixture\($0)", name: "Fixture \($0)", launchedAt: nil) }
         var rule = preset; rule.enabled = true
@@ -40,6 +44,11 @@ extension GesturesTests {
                "A finished picker cannot commit a second action")
         var untouched = session()
         expect(release(&untouched, x: 0.5) == .cancelled, "Releasing without browsing cancels instead of activating a default app")
+        var vertical = session()
+        for i in 1...4 { _ = vertical.process(.init(time: 10 + Double(i)*0.05, hands: [hand(0.5, 0.5 + Double(i)*0.02, pose: .pinch)]), app: "com.example.source", optionHeld: true, allowed: true) }
+        expect(release(&vertical, x: 0.5) == .cancelled, "Opening the picker and moving vertically cannot activate an app")
+        var hiddenTip = hand(pose: .pinch); hiddenTip.joints["thumbTip"]?.confidence = 0.2
+        expect(!hiddenTip.matches(.init(kind: .pinch), hand: .either, minimum: 0.55) && hiddenTip.pinchGuidance(minimum: 0.55) == "Show thumb, index, and palm clearly", "Uncertain fingertips stay blocked with useful guidance")
         var jitter = session()
         for i in 1...30 { _ = jitter.process(.init(time: 10 + Double(i)*0.05, hands: [hand(0.5 + sin(Double(i))*0.01, pose: .pinch)]), app: "com.example.source", optionHeld: true, allowed: true) }
         expect(jitter.selectedIndex == 0 && !jitter.finished, "Selection ignores small hand tremors")

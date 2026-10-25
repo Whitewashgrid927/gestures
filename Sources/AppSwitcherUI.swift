@@ -169,7 +169,7 @@ struct AppSwitcherPreviewSheet: View {
                 Spacer()
                 Button("Done") { dismiss() }.buttonStyle(GlassButton(prominent: true))
             }
-            Text("During a real gesture, pinch and move sideways to open this picker. Keep pinching to browse. Open the pinch to choose, or lower your hand to cancel.")
+            Text("During a real gesture, pinch to open this picker. Keep pinching and slide sideways to browse. Open the pinch to choose, or lower your hand to cancel.")
                 .font(.system(size: 12)).foregroundStyle(.secondary).lineSpacing(4)
         }.padding(28).frame(width: 576).background(WindowMaterial()).preferredColorScheme(.light)
             .onAppear {
