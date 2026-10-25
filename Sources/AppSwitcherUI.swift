@@ -6,11 +6,13 @@ import UniformTypeIdentifiers
     @Published var targets: [AppSwitchTarget] = []
     @Published var selectedIndex = 0
     @Published var practicing = false
+    @Published var instruction = "Slide with an open hand · pinch again to choose"
     var synthetic = false
 }
 
 struct AppPickerView: View {
     @ObservedObject var presentation: AppPickerPresentation
+    var onCancel: (() -> Void)? = nil
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     var body: some View {
         VStack(spacing: 16) {
@@ -19,7 +21,7 @@ struct AppPickerView: View {
                 Text(presentation.practicing ? "Practice · no app will switch" : "Pinch & slide")
                     .font(.system(size: 12, weight: .semibold))
                 Spacer()
-                Text("Open pinch to choose").font(.system(size: 11)).foregroundStyle(.secondary)
+                Text("Pinch again to choose").font(.system(size: 11)).foregroundStyle(.secondary)
             }
             ScrollViewReader { proxy in
                 ScrollView(.horizontal, showsIndicators: false) {
@@ -54,9 +56,11 @@ struct AppPickerView: View {
             }.frame(height: 92)
             HStack {
                 Image(systemName: "arrow.left.and.right")
-                Text("Slide to browse")
+                Text(presentation.instruction)
                 Spacer()
-                Text("Lower your hand to cancel")
+                if let onCancel {
+                    Button("Cancel", systemImage: "xmark.circle", action: onCancel).buttonStyle(.borderless).controlSize(.small)
+                }
             }.font(.system(size: 10)).foregroundStyle(.secondary)
         }.padding(20).background { GlassSurface(radius: 27).allowsHitTesting(false) }
     }
@@ -70,24 +74,27 @@ final class AppPickerPanel: NSPanel {
 @MainActor final class AppPickerController {
     let presentation = AppPickerPresentation()
     private var panel: AppPickerPanel?
-    func show(_ session: AppSwitchSession) -> Bool {
+    func show(_ session: AppSwitchSession, onCancel: @escaping () -> Void) -> Bool {
         guard NSApp != nil, let screen = NSScreen.screens.first(where: { $0.frame.contains(NSEvent.mouseLocation) }) ?? NSScreen.main else { return false }
         presentation.targets = session.targets; presentation.selectedIndex = session.selectedIndex
         presentation.practicing = session.practicing
+        presentation.instruction = session.instruction
         let width = min(max(420, Double(session.targets.count) * 88 + 40), min(760, screen.visibleFrame.width - 48))
-        let frame = NSRect(x: screen.visibleFrame.midX - width/2, y: screen.visibleFrame.minY + 80, width: width, height: 208)
+        let frame = NSRect(x: screen.visibleFrame.midX - width/2, y: screen.visibleFrame.minY + 80, width: width, height: 224)
         let window = panel ?? AppPickerPanel(contentRect: frame, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
         window.title = "Pinch & slide"; window.isOpaque = false; window.backgroundColor = .clear
-        window.hasShadow = true; window.ignoresMouseEvents = true; window.hidesOnDeactivate = false; window.isReleasedWhenClosed = false
+        window.hasShadow = true; window.ignoresMouseEvents = false; window.hidesOnDeactivate = false; window.isReleasedWhenClosed = false
         window.level = .floating; window.animationBehavior = .none
         window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .canJoinAllApplications, .stationary, .ignoresCycle]
-        let host = NSHostingView(rootView: AppPickerView(presentation: presentation))
+        let host = NSHostingView(rootView: AppPickerView(presentation: presentation, onCancel: onCancel))
         host.wantsLayer = true; host.layer?.backgroundColor = NSColor.clear.cgColor
         window.contentView = host; window.setFrame(frame, display: false)
         panel = window; window.orderFrontRegardless()
         return window.isVisible
     }
-    func update(_ session: AppSwitchSession) { presentation.selectedIndex = session.selectedIndex }
+    func update(_ session: AppSwitchSession) {
+        presentation.selectedIndex = session.selectedIndex; presentation.instruction = session.instruction
+    }
     func hide() {
         panel?.orderOut(nil); panel?.contentView = nil
         presentation.targets = []; presentation.selectedIndex = 0
@@ -99,7 +106,7 @@ struct AppSwitcherSettingsView: View {
     @State private var selectionError: String?
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
-            Text("Pinch, slide, then open your pinch to choose. Losing the hand cancels.")
+            Text("Pinch to open, release and slide to browse, then pinch again to choose. Losing the hand pauses selection while the picker stays open.")
                 .font(.system(size: 12)).foregroundStyle(.secondary)
             VStack(alignment: .leading, spacing: 8) {
                 HStack { Text("Travel per app"); Spacer(); Text("\(Int(settings.distancePerApp * 100))% of camera width").foregroundStyle(.secondary) }
@@ -109,7 +116,7 @@ struct AppSwitcherSettingsView: View {
             Toggle("Reverse slide direction", isOn: $settings.reversed)
             HStack {
                 Text("Cancel after")
-                Slider(value: $settings.timeout, in: 3...10, step: 1).accessibilityLabel("App picker timeout")
+                Slider(value: $settings.timeout, in: 3...30, step: 1).accessibilityLabel("App picker timeout")
                 Text("\(Int(settings.timeout)) seconds").monospacedDigit().frame(width: 80)
             }.font(.system(size: 12))
             Toggle("Only include chosen apps", isOn: $settings.onlyChosenApps)
@@ -162,14 +169,14 @@ struct AppSwitcherPreviewSheet: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 22) {
             SheetHeading(title: "A pinch. A slide. A different app.", subtitle: "Preview the glass picker without a camera or app activation.")
-            AppPickerView(presentation: presentation).frame(width: 520, height: 208)
+            AppPickerView(presentation: presentation, onCancel: { dismiss() }).frame(width: 520, height: 224)
             HStack {
                 Button { presentation.selectedIndex = (presentation.selectedIndex + 4) % 5 } label: { Label("Previous", systemImage: "arrow.left") }.buttonStyle(GlassButton())
                 Button { presentation.selectedIndex = (presentation.selectedIndex + 1) % 5 } label: { Label("Next", systemImage: "arrow.right") }.buttonStyle(GlassButton())
                 Spacer()
                 Button("Done") { dismiss() }.buttonStyle(GlassButton(prominent: true))
             }
-            Text("During a real gesture, pinch to open this picker. Keep pinching and slide sideways to browse. Open the pinch to choose, or lower your hand to cancel.")
+            Text("Pinch to open, release and slide your open hand to browse, then pinch again to choose. The picker stays open if you lower your hand; show one clear open hand to resume. Use Cancel to dismiss it.")
                 .font(.system(size: 12)).foregroundStyle(.secondary).lineSpacing(4)
         }.padding(28).frame(width: 576).background(WindowMaterial()).preferredColorScheme(.light)
             .onAppear {

@@ -13,7 +13,7 @@ A native Mac prototype for defining your own camera-based hand gestures and assi
 - If you select a specific camera, it must be available when capture starts. Gestures asks you to reconnect it or choose another device instead of silently opening a different camera. **System default** remains available as an explicit choice.
 - Accessibility permission for keyboard, Space-switching, and scrolling actions. Test mode does not need that permission.
 
-This source builds version 0.2.1 with the pinch-and-slide app picker. The download link above currently points to the published 0.1.12 release. A locally built app uses ad-hoc signing unless you supply an identity.
+This source builds version 0.2.2 with the persistent pinch-and-slide app picker. The download link above currently points to the published 0.1.12 release. A locally built app uses ad-hoc signing unless you supply an identity.
 
 ## First use
 
@@ -37,13 +37,15 @@ Closing the window during preview or practice, with Mac control off, still stops
 
 Choose **Pinch & slide** in the sidebar to add or select the disabled preset. Start
 the camera and use **Practice only** first. Pinch your thumb and index finger to
-open the native Liquid Glass app picker. Keep pinching and slide
-left or right to highlight an app. Open the pinch for a brief, confidently tracked
-release to choose it. Lowering the hand, losing tracking, showing a second hand,
-or leaving the current app cancels instead. Releasing without browsing also cancels.
+open the native Liquid Glass app picker. Release the pinch, then move your open
+hand left or right to highlight an app. Pinch again to confirm it. The picker stays
+open when you lower your hand, tracking becomes uncertain, or a second hand appears;
+selection freezes and switching stays blocked. Show one clear open hand to resume
+from a fresh position. The opening pinch cannot also confirm, and a pinch without
+horizontal selection cannot activate a default app. Use **Cancel** to dismiss it.
 
-**Edit gesture → Action** sets travel per app, reverse direction, a 3–10 second
-timeout, and an optional list of included apps. Only running apps appear; the list
+**Edit gesture → Action** sets travel per app, reverse direction, a 3–30 second
+timeout (15 seconds by default), and an optional list of included apps. Only running apps appear; the list
 is frozen during each interaction, limited to 20, and excludes Gestures itself.
 The **Gesture** tab configures the starting sequence and hand. The final pose must
 be pinched; a separate Release step is not needed. The new **Slide sideways** step
@@ -53,16 +55,17 @@ gestures a distinct starting pose, hand, or app scope to avoid competing mapping
 **Preview picker** shows synthetic app names without camera access or app activation.
 Practice can show the real running-app picker, but only reports what it would switch
 to. To use it for real, enable **Use gesture** in the editor, then **Mac control**.
-The picker never takes keyboard focus or intercepts clicks. Reduced Motion disables
+The picker never takes keyboard focus; its Cancel button accepts clicks. Reduced Motion disables
 its selection animation, and the glass follows macOS accessibility settings.
 
-On release, the picker disappears, the optional desktop ripple runs, and only then
+On the confirming pinch, the picker disappears, the optional desktop ripple runs, and only then
 does Gestures request app activation. The final gate rechecks the current app,
 unchanged rule, permissions, Option clutch, secure input, current camera frame,
 and the selected process identity. The existing 350 ms frame and 650 ms completed
-gesture deadlines apply to that final release. App activation is reported as
+gesture deadlines apply to that final pinch. App activation is reported as
 confirmed only after macOS actually makes the target app active. Pausing, editing,
-sleep, stale input, or cancellation clears both picker and pending activation.
+sleep, a foreground-app change, or cancellation clears both picker and pending activation.
+Tracking loss pauses selection without allowing stale input to trigger an action.
 No app list, process identifiers, icons, or activation history are written to disk;
 only explicitly configured app bundle IDs are saved with the rule.
 

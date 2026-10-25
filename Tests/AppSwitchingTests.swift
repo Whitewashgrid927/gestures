@@ -25,32 +25,43 @@ extension GesturesTests {
 
         let targets = (0..<3).map { AppSwitchTarget(id: Int32(770001 + $0), bundleID: "com.example.fixture\($0)", name: "Fixture \($0)", launchedAt: nil) }
         var rule = preset; rule.enabled = true
-        func session(_ configured: GestureRule? = nil) -> AppSwitchSession {
+        func opening(_ configured: GestureRule? = nil) -> AppSwitchSession {
             AppSwitchSession(rule: configured ?? rule, targets: targets, frame: .init(time: 10, hands: [hand(0.5, pose: .pinch)]),
                              sourceApp: "com.example.source", currentPID: targets[0].id, practicing: false)!
         }
-        func move(_ value: inout AppSwitchSession, count: Int = 3) {
-            for i in 1...count { _ = value.process(.init(time: 10 + Double(i)*0.05, hands: [hand(0.5 + Double(i)*0.04, pose: .pinch)]), app: "com.example.source", optionHeld: true, allowed: true) }
+        func openHand(_ value: inout AppSwitchSession, x: Double = 0.5) {
+            for _ in 0..<4 { _ = value.process(.init(time: value.lastFrameAt + 0.05, hands: [hand(x)]), app: "com.example.source", optionHeld: true, allowed: true) }
         }
-        func release(_ value: inout AppSwitchSession, x: Double = 0.62) -> AppSwitchUpdate {
+        func session(_ configured: GestureRule? = nil) -> AppSwitchSession {
+            var value = opening(configured); openHand(&value); return value
+        }
+        func move(_ value: inout AppSwitchSession, count: Int = 3) {
+            for i in 1...count { _ = value.process(.init(time: value.lastFrameAt + 0.05, hands: [hand(0.5 + Double(i)*0.04)]), app: "com.example.source", optionHeld: true, allowed: true) }
+        }
+        func confirm(_ value: inout AppSwitchSession, x: Double = 0.62) -> AppSwitchUpdate {
             var result = AppSwitchUpdate.browsing
-            for _ in 0..<4 { result = value.process(.init(time: value.lastFrameAt + 0.05, hands: [hand(x, pose: .open)]), app: "com.example.source", optionHeld: true, allowed: true) }
+            for _ in 0..<4 { result = value.process(.init(time: value.lastFrameAt + 0.05, hands: [hand(x, pose: .pinch)]), app: "com.example.source", optionHeld: true, allowed: true) }
             return result
         }
+        var heldOpening = opening()
+        expect(confirm(&heldOpening, x: 0.5) == .browsing && heldOpening.awaitingOpenHand && !heldOpening.finished,
+               "The opening pinch cannot also confirm; the picker persists until the hand opens")
         var browsing = session(); move(&browsing)
-        expect(browsing.selectedIndex == 1 && !browsing.finished, "Horizontal motion selects another app without committing")
-        expect(release(&browsing) == .commit(targets[1]), "A sustained, confident open pinch commits the highlighted app")
+        expect(browsing.selectedIndex == 1 && !browsing.finished, "Horizontal open-hand motion selects another app without committing")
+        openHand(&browsing, x: 0.62)
+        expect(!browsing.finished && browsing.selectedIndex == 1, "Relaxing the pinch keeps the selected app visible without switching")
+        expect(confirm(&browsing) == .commit(targets[1]), "A second sustained, confident pinch commits the highlighted app")
         expect(browsing.process(.init(time: 10.5, hands: [hand(0.62)]), app: "com.example.source", optionHeld: true, allowed: true) == .cancelled,
                "A finished picker cannot commit a second action")
         var untouched = session()
-        expect(release(&untouched, x: 0.5) == .cancelled, "Releasing without browsing cancels instead of activating a default app")
+        expect(confirm(&untouched, x: 0.5) == .browsing && !untouched.finished, "Pinching without browsing keeps the picker open without activating a default app")
         var vertical = session()
-        for i in 1...4 { _ = vertical.process(.init(time: 10 + Double(i)*0.05, hands: [hand(0.5, 0.5 + Double(i)*0.02, pose: .pinch)]), app: "com.example.source", optionHeld: true, allowed: true) }
-        expect(release(&vertical, x: 0.5) == .cancelled, "Opening the picker and moving vertically cannot activate an app")
+        for i in 1...4 { _ = vertical.process(.init(time: vertical.lastFrameAt + 0.05, hands: [hand(0.5, 0.5 + Double(i)*0.02)]), app: "com.example.source", optionHeld: true, allowed: true) }
+        expect(confirm(&vertical, x: 0.5) == .browsing && !vertical.finished, "Vertical movement cannot select or activate an app")
         var hiddenTip = hand(pose: .pinch); hiddenTip.joints["thumbTip"]?.confidence = 0.2
         expect(!hiddenTip.matches(.init(kind: .pinch), hand: .either, minimum: 0.55) && hiddenTip.pinchGuidance(minimum: 0.55) == "Show thumb, index, and palm clearly", "Uncertain fingertips stay blocked with useful guidance")
         var jitter = session()
-        for i in 1...30 { _ = jitter.process(.init(time: 10 + Double(i)*0.05, hands: [hand(0.5 + sin(Double(i))*0.01, pose: .pinch)]), app: "com.example.source", optionHeld: true, allowed: true) }
+        for i in 1...30 { _ = jitter.process(.init(time: jitter.lastFrameAt + 0.05, hands: [hand(0.5 + sin(Double(i))*0.01)]), app: "com.example.source", optionHeld: true, allowed: true) }
         expect(jitter.selectedIndex == 0 && !jitter.finished, "Selection ignores small hand tremors")
         var reverseRule = rule; reverseRule.action.appSwitcher?.reversed = true
         var reversed = session(reverseRule); move(&reversed)
@@ -59,44 +70,60 @@ extension GesturesTests {
         var sensitive = session(sensitiveRule); move(&sensitive)
         expect(sensitive.selectedIndex == 2, "Configured travel distance changes selection sensitivity")
 
-        for reason in ["missing hand", "two hands", "wrong hand", "low confidence", "tracking jump", "stale frame", "backwards time", "app changed", "paused", "Option released"] {
+        for reason in ["backwards time", "app changed", "paused", "Option released"] {
             var clutched = rule; clutched.requireOptionKey = true
             var value = session(clutched); move(&value)
-            var frame = HandFrame(time: 10.2, hands: [hand(0.62, pose: .pinch)])
+            var frame = HandFrame(time: value.lastFrameAt + 0.05, hands: [hand(0.62, pose: .pinch)])
             var app = "com.example.source", option = true, allowed = true
             switch reason {
-            case "missing hand": frame.hands = []
-            case "two hands": frame.hands.append(hand(0.7, pose: .pinch, side: .left))
-            case "wrong hand": frame.hands[0].side = .left
-            case "low confidence": frame.hands[0].confidence = 0.1
-            case "tracking jump": frame.hands[0].palm.x = 0.95
-            case "stale frame": frame.time = 10.6
-            case "backwards time": frame.time = 10.1
+            case "backwards time": frame.time = value.lastFrameAt - 0.01
             case "app changed": app = "com.example.other"
             case "paused": allowed = false
             default: option = false
             }
             expect(value.process(frame, app: app, optionHeld: option, allowed: allowed) == .cancelled && value.finished,
                    "Picker cancels without committing on \(reason)")
-            expect(release(&value) != .commit(targets[1]), "Later release cannot revive a picker cancelled by \(reason)")
+            expect(confirm(&value) != .commit(targets[1]), "A later pinch cannot revive a picker cancelled by \(reason)")
+        }
+        for reason in ["missing hand", "two hands", "wrong hand", "low confidence", "tracking jump", "stale frame"] {
+            var value = session(); move(&value)
+            let selection = value.selectedIndex
+            var frame = HandFrame(time: value.lastFrameAt + 0.05, hands: [hand(0.62)])
+            switch reason {
+            case "missing hand": frame.hands = []
+            case "two hands": frame.hands.append(hand(0.7, side: .left))
+            case "wrong hand": frame.hands[0].side = .left
+            case "low confidence": frame.hands[0].confidence = 0.1
+            case "tracking jump": frame.hands[0].palm.x = 0.95
+            default: frame.time = value.lastFrameAt + 0.6
+            }
+            expect(value.process(frame, app: "com.example.source", optionHeld: true, allowed: true) == .browsing && value.trackingPaused && !value.finished && value.selectedIndex == selection,
+                   "Picker stays visible but freezes selection on \(reason)")
+            expect(confirm(&value) == .browsing && value.awaitingOpenHand,
+                   "A returning pinch cannot activate an old selection after \(reason)")
+            openHand(&value, x: 0.62)
+            expect(!value.awaitingOpenHand && value.selectedIndex == selection,
+                   "A clear open hand resumes from a fresh anchor after \(reason)")
+            expect(confirm(&value) == .commit(targets[selection]), "Only a new deliberate pinch confirms after rearming: \(reason)")
         }
         var uncertain = session(); move(&uncertain)
         for _ in 0..<6 {
             var open = hand(0.62); open.joints["thumbTip"]?.confidence = 0.1
             let result = uncertain.process(.init(time: uncertain.lastFrameAt + 0.05, hands: [open]), app: "com.example.source", optionHeld: true, allowed: true)
-            expect(result != .commit(targets[1]), "Uncertain thumb tracking is never interpreted as a deliberate release")
+            expect(result != .commit(targets[1]), "Uncertain thumb tracking never confirms an app switch")
         }
-        expect(uncertain.finished, "Uncertain release tracking cancels at its bounded deadline")
+        expect(uncertain.trackingPaused && !uncertain.finished, "Sustained uncertainty disarms selection while keeping the picker visible")
+        expect(confirm(&uncertain) == .browsing, "Uncertain tracking must be rearmed by an open hand before confirmation")
         var timeoutRule = rule; timeoutRule.action.appSwitcher?.timeout = 3
         var timed = session(timeoutRule)
-        for i in 1...32 { _ = timed.process(.init(time: 10 + Double(i)*0.1, hands: [hand(0.5, pose: .pinch)]), app: "com.example.source", optionHeld: true, allowed: true) }
-        expect(timed.finished, "A live but idle hand cannot hold the picker beyond the configured timeout")
+        for _ in 0..<32 { _ = timed.process(.init(time: timed.lastFrameAt + 0.1, hands: []), app: "com.example.source", optionHeld: true, allowed: true) }
+        expect(timed.finished, "A persistent picker with no hand still closes at its configured timeout")
         var cancelled = session(); move(&cancelled); cancelled.cancel()
-        expect(release(&cancelled) == .cancelled, "Explicit pause or cancellation cannot be undone by release frames")
+        expect(confirm(&cancelled) == .cancelled, "Explicit Cancel cannot be undone by later pinch frames")
         var noDefaultFallback = session(); move(&noDefaultFallback)
-        _ = noDefaultFallback.process(.init(time: 10.2, hands: [hand(0.62)]), app: "com.example.source", optionHeld: true, allowed: true)
-        _ = noDefaultFallback.process(.init(time: 10.25, hands: [hand(0.62, pose: .pinch)]), app: "com.example.source", optionHeld: true, allowed: true)
-        expect(!noDefaultFallback.finished, "A brief open-pinch flicker does not commit an app switch")
+        _ = noDefaultFallback.process(.init(time: noDefaultFallback.lastFrameAt + 0.05, hands: [hand(0.62, pose: .pinch)]), app: "com.example.source", optionHeld: true, allowed: true)
+        openHand(&noDefaultFallback, x: 0.62)
+        expect(!noDefaultFallback.finished && noDefaultFallback.selectedIndex == 1, "A brief pinch flicker cannot commit or add selection travel")
 
         for defect in ["open pose", "Release step", "NaN", "out of range", "empty app selection", "invalid app ID", "duplicate app ID"] {
             var invalid = preset

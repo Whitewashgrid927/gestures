@@ -31,7 +31,8 @@ struct AppSwitchTarget: Identifiable, Equatable, Sendable {
 
 enum AppSwitchUpdate: Equatable { case browsing, commit(AppSwitchTarget), cancelled }
 
-/// Selection uses current, confident one-hand input. Absence is never a release.
+/// The picker can remain visible while input is paused. Only a new, confident
+/// pinch after open-hand browsing may commit; visibility never grants permission.
 struct AppSwitchSession {
     let rule: GestureRule
     let targets: [AppSwitchTarget]
@@ -43,13 +44,22 @@ struct AppSwitchSession {
     private(set) var lastFrameAt: Double
     private(set) var direction: MoveDirection?
     private(set) var finished = false
-    private var previousHand: TrackedHand
+    private var previousHand: TrackedHand?
     private var filteredX: Double
     private var anchorX: Double
     private var releaseSince: Double?
+    private var confirmSince: Double?
     private var uncertainSince: Double?
     private var moved = false
+    private(set) var awaitingOpenHand = true
+    private(set) var trackingPaused = false
     var selected: AppSwitchTarget { targets[selectedIndex] }
+    var instruction: String {
+        if trackingPaused { return "Selection paused · show one open hand" }
+        if awaitingOpenHand { return "Release your pinch to browse" }
+        if confirmSince != nil { return "Pinch to confirm \(selected.name)" }
+        return "Slide with an open hand · pinch again to choose"
+    }
 
     init?(rule: GestureRule, targets: [AppSwitchTarget], frame: HandFrame, sourceApp: String,
           currentPID: Int32?, practicing: Bool) {
@@ -65,21 +75,56 @@ struct AppSwitchSession {
         selectedIndex = targets.firstIndex(where: { $0.id == currentPID }) ?? 0
     }
     mutating func cancel() { finished = true }
+    mutating func pauseTracking() {
+        guard !finished else { return }
+        awaitingOpenHand = true; trackingPaused = true; previousHand = nil
+        releaseSince = nil; confirmSince = nil; uncertainSince = nil
+    }
+    private mutating func anchor(at hand: TrackedHand) {
+        filteredX = hand.palm.x; anchorX = hand.palm.x
+    }
     mutating func process(_ frame: HandFrame, app: String, optionHeld: Bool, allowed: Bool) -> AppSwitchUpdate {
         guard !finished else { return .cancelled }
         let settings = rule.action.switcherSettings
         guard allowed, app == sourceApp, frame.time.isFinite, frame.time > lastFrameAt,
-              frame.time - lastFrameAt <= 0.25, frame.time - startedAt <= settings.timeout,
-              !rule.requireOptionKey || optionHeld, frame.hands.count == 1, let hand = frame.hands.first,
-              hand.matches(.init(kind: .any), hand: rule.hand, minimum: rule.confidence),
-              (previousHand.side == .either || hand.side == previousHand.side),
-              (hand.palm - previousHand.palm).length < 0.15 else { finished = true; return .cancelled }
+              frame.time - startedAt <= settings.timeout,
+              !rule.requireOptionKey || optionHeld else { finished = true; return .cancelled }
         let dt = frame.time - lastFrameAt
-        lastFrameAt = frame.time; previousHand = hand
-        if hand.matches(.init(kind: .pinch), hand: rule.hand, minimum: rule.confidence) {
-            // A partial release cannot move the selection if the hand re-pinches.
-            if releaseSince != nil || uncertainSince != nil { filteredX = hand.palm.x; anchorX = hand.palm.x }
-            releaseSince = nil; uncertainSince = nil
+        lastFrameAt = frame.time
+        guard dt <= 0.25, frame.hands.count == 1, let hand = frame.hands.first,
+              hand.matches(.init(kind: .any), hand: rule.hand, minimum: rule.confidence) else {
+            pauseTracking(); return .browsing
+        }
+        if let previousHand, (previousHand.side != .either && hand.side != previousHand.side) || (hand.palm - previousHand.palm).length >= 0.15 {
+            pauseTracking(); return .browsing
+        }
+        previousHand = hand
+        let apart = PoseDefinition(kind: .custom, thumb: .any, index: .any, middle: .any, ring: .any, little: .any, pinch: .apart)
+        let open = hand.matches(apart, hand: rule.hand, minimum: rule.confidence)
+        let pinched = hand.matches(.init(kind: .pinch), hand: rule.hand, minimum: rule.confidence)
+        if awaitingOpenHand {
+            if open {
+                if releaseSince == nil { releaseSince = frame.time }
+                if frame.time - (releaseSince ?? frame.time) >= 0.12 {
+                    awaitingOpenHand = false; trackingPaused = false; releaseSince = nil
+                    anchor(at: hand)
+                }
+            } else { releaseSince = nil }
+            return .browsing
+        }
+        if pinched {
+            uncertainSince = nil
+            if confirmSince == nil { confirmSince = frame.time }
+            guard frame.time - (confirmSince ?? frame.time) >= 0.12 else { return .browsing }
+            guard moved, selected.id != sourcePID else {
+                awaitingOpenHand = true; confirmSince = nil; return .browsing
+            }
+            finished = true; return .commit(selected)
+        }
+        if open {
+            // Neither a partial confirmation nor uncertain tracking adds travel.
+            if confirmSince != nil || uncertainSince != nil { anchor(at: hand) }
+            confirmSince = nil; uncertainSince = nil
             filteredX += (hand.palm.x - filteredX) * (1 - exp(-dt / 0.055))
             let offset = filteredX - anchorX
             let steps = Int(abs(offset) / settings.distancePerApp)
@@ -92,17 +137,9 @@ struct AppSwitchSession {
             }
             return .browsing
         }
-        let apart = PoseDefinition(kind: .custom, thumb: .any, index: .any, middle: .any, ring: .any, little: .any, pinch: .apart)
-        if hand.matches(apart, hand: rule.hand, minimum: rule.confidence) {
-            uncertainSince = nil
-            if releaseSince == nil { releaseSince = frame.time }
-            guard frame.time - (releaseSince ?? frame.time) >= 0.12 else { return .browsing }
-            finished = true
-            return moved && selected.id != sourcePID ? .commit(selected) : .cancelled
-        }
-        releaseSince = nil
+        confirmSince = nil
         if uncertainSince == nil { uncertainSince = frame.time }
-        if frame.time - (uncertainSince ?? frame.time) > 0.18 { finished = true; return .cancelled }
+        if frame.time - (uncertainSince ?? frame.time) > 0.18 { pauseTracking() }
         return .browsing
     }
 }

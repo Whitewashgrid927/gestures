@@ -210,7 +210,7 @@ final class GestureStore: ObservableObject {
             selectedProfile = "*"; select(existing.id)
         } else { update(.appSwitcherPreset) }
         guard selected?.action.kind == .switchApps else { return }
-        notice = "Pinch to open the picker, slide to browse, then open your pinch to choose. Try Practice first."
+        notice = "Pinch to open, release and slide to browse, then pinch again to choose. Try Practice first."
     }
     func duplicateSelected() {
         guard var rule = selected else { return }; rule.id = UUID(); rule.name = String((rule.name + " copy").prefix(80)); rule.enabled = false
@@ -368,18 +368,23 @@ final class GestureStore: ObservableObject {
             notice = targets.isEmpty ? "Open an included app before trying pinch & slide." : "Keep one pinched hand clearly visible."
             return
         }
-        guard appPicker.show(session) else { coordinator.finishInteractiveAction(rule, at: frame.time); return }
+        guard appPicker.show(session, onCancel: { [weak self] in
+            self?.cancelAppSwitch(); self?.tracking.actionStatus = "Cancelled · no app switched"
+        }) else { coordinator.finishInteractiveAction(rule, at: frame.time); return }
         appSwitch = session
         tracking.lastMatch = testing ? "Practice app picker" : "App picker opened"
-        tracking.actionStatus = "Keep pinching to browse · open pinch to choose"
+        tracking.actionStatus = "Release, slide to browse, then pinch again to choose"
         appSwitchWatchdog = Task { [weak self] in
             while !Task.isCancelled {
                 try? await Task.sleep(for: .milliseconds(50))
                 guard !Task.isCancelled, let self, let session = self.appSwitch else { return }
                 let now = ProcessInfo.processInfo.systemUptime
-                if now - session.lastFrameAt > 0.35 || now - session.startedAt > session.rule.action.switcherSettings.timeout ||
+                if now - session.startedAt > session.rule.action.switcherSettings.timeout ||
                     self.frontApp != session.sourceApp || ActionRunner.secureInput || (!session.practicing && !ActionRunner.hasAccess) {
                     self.cancelAppSwitch(); self.notice = "App picker cancelled. No app was switched."; return
+                }
+                if now - session.lastFrameAt > 0.35 {
+                    var paused = session; paused.pauseTracking(); self.appSwitch = paused; self.appPicker.update(paused)
                 }
             }
         }
@@ -396,7 +401,7 @@ final class GestureStore: ObservableObject {
         switch result {
         case .browsing:
             appPicker.update(session)
-            tracking.progress = .init(step: session.rule.steps.count - 1, fraction: 1, message: "\(session.selected.name) · open pinch to choose", hand: frame.hands.first)
+            tracking.progress = .init(step: session.rule.steps.count - 1, fraction: 1, message: session.instruction, hand: frame.hands.first)
         case .cancelled:
             cancelAppSwitch(); tracking.actionStatus = "Cancelled · no app switched"
         case .commit(let target):

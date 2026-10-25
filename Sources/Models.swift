@@ -86,11 +86,11 @@ enum ActionKind: String, Codable, CaseIterable, Sendable {
 struct AppSwitcherSettings: Codable, Equatable, Sendable {
     var distancePerApp = 0.075
     var reversed = false
-    var timeout = 6.0
+    var timeout = 15.0
     var onlyChosenApps = false
     var bundleIDs: [String] = []
     func validated() throws -> Self {
-        guard distancePerApp.isFinite, (0.04...0.2).contains(distancePerApp), timeout.isFinite, (3...10).contains(timeout),
+        guard distancePerApp.isFinite, (0.04...0.2).contains(distancePerApp), timeout.isFinite, (3...30).contains(timeout),
               bundleIDs.count <= 32, Set(bundleIDs).count == bundleIDs.count,
               bundleIDs.allSatisfy({ !$0.isEmpty && $0.count <= 200 && $0.range(of: "^[A-Za-z0-9][A-Za-z0-9._-]+$", options: .regularExpression) != nil }),
               !onlyChosenApps || !bundleIDs.isEmpty else { throw GestureError("Choose at least one app, and keep switcher distance and timeout within their supported ranges.") }
@@ -157,7 +157,7 @@ struct GestureRule: Identifiable, Codable, Equatable, Sendable {
         if action.kind == .switchApps {
             _ = try action.switcherSettings.validated()
             guard steps.last(where: { $0.kind == .pose })?.pose.pinchRequirement == .touching,
-                  !steps.contains(where: { $0.kind == .release }) else { throw GestureError("App switching must end with a pinched pose. Leave out Release: opening your pinch selects the highlighted app.") }
+                  !steps.contains(where: { $0.kind == .release }) else { throw GestureError("App switching must end with a pinched pose. Leave out Release: the picker handles opening your hand, browsing, and pinching again to confirm.") }
         }
         guard scope.name.count <= 100, scope.bundleID.count <= 200,
               scope.bundleID.isEmpty || scope.bundleID.range(of: "^[A-Za-z0-9][A-Za-z0-9._-]+$", options: .regularExpression) != nil else { throw GestureError("Choose a valid app profile.") }

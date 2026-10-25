@@ -18,9 +18,12 @@ personal gesture exports, or other private data in public issues.
   supplied display labels are not authoritative.
 - Screen frames and camera frames stay in memory. Capture and animation deadlines,
   screen-size limits, reduced-motion behavior, and fixed shader edges must remain bounded.
-- App switching requires a deliberate, confidently tracked pinch release. Tracking loss,
-  a second hand, changed foreground app, timeout, or pause cancels. Practice never
-  activates apps. The picker cannot take focus or intercept clicks. After the ripple,
+- App switching requires an opening pinch, clear open-hand browsing, and a second
+  deliberate, confidently tracked pinch. Tracking loss or a second hand leaves the
+  picker visible but freezes selection and blocks activation until a clear open hand
+  rearms input; returning with a pinch cannot confirm. A changed foreground app,
+  timeout, Cancel, or paused control closes it. Practice never activates apps.
+  The picker cannot take focus; only its Cancel control handles clicks. After the ripple,
   dispatch rechecks the saved rule, current app, permissions, and target process identity.
 - Shortcut execution uses a fixed executable and argument array, never a shell.
   It remains single-flight with a timeout. Already-executed Shortcut work cannot be undone.
