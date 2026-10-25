@@ -61,17 +61,40 @@ struct ContinuousGestureSession {
     var knownSide: HandChoice
     var motion: ScrollMotion
     var volumeMotion: VolumeMotion
+    private var lastConfidentTime: Double
+    private(set) var confidenceDeadline: Double?
     init(rule: GestureRule, hand: TrackedHand, time: Double) {
         self.rule = rule; self.hand = hand; self.time = time; knownSide = hand.side
+        lastConfidentTime = time
         pose = rule.steps.last(where: { $0.kind == .pose })?.pose ?? .init()
         motion = .init(origin: hand.palm); volumeMotion = .init(origin: hand.palm)
     }
     mutating func sample(_ frame: HandFrame) -> Double? {
         guard frame.hands.count == 1, let next = frame.hands.first,
-              next.matches(pose, hand: rule.hand, minimum: rule.confidence),
+              rule.action.kind != .volume || (frame.detectedHands ?? frame.hands.count) == 1,
               knownSide == .either || next.side == .either || next.side == knownSide,
               frame.time > time, frame.time - time <= 0.25,
               (next.palm - hand.palm).length < 0.15 else { return nil }
+        let matched = next.matches(pose, hand: rule.hand, minimum: rule.confidence)
+        if rule.action.kind == .volume && pose.kind == .fist {
+            if let confidenceDeadline, frame.time > confidenceDeadline { return nil }
+            if !matched {
+                guard next.fistIsUncertain(hand: rule.hand, minimum: rule.confidence),
+                      frame.time - lastConfidentTime <= FistStability.uncertaintyLimit else { return nil }
+                confidenceDeadline = lastConfidentTime + FistStability.uncertaintyLimit
+                if next.side != .either { knownSide = next.side }
+                hand = next; time = frame.time
+                return 0 // Keep the glass visible; uncertainty must never change volume.
+            }
+            let wasUncertain = confidenceDeadline != nil
+            confidenceDeadline = nil; lastConfidentTime = frame.time
+            if wasUncertain {
+                volumeMotion = .init(origin: next.palm) // Discard movement while confidence was low.
+                if next.side != .either { knownSide = next.side }
+                hand = next; time = frame.time
+                return 0
+            }
+        } else if !matched { return nil }
         let pixels = rule.action.kind == .volume
             ? volumeMotion.sample(next.palm, elapsed: frame.time - time, settings: rule.action.volumeSettings)
             : motion.sample(next.palm, elapsed: frame.time - time, action: rule.action)

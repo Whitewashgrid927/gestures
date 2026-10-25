@@ -40,6 +40,12 @@ personal gesture exports, or other private data in public issues.
   straight joints cannot be assumed bent. Other pose confidence requirements
   remain unchanged. Recognition diagnostics store only current status text in
   memory, not images or landmark histories.
+- Fist volume arms on at least three confident observations spanning 120 ms.
+  Uncertain observations can bridge at most 150 ms since the last confident one;
+  they never authorize movement or complete arming. During a session they emit
+  zero movement, and recovery resets the movement anchor. A confident opened
+  finger, missing or second hand, lost continuity, or expired uncertainty stops
+  the session. The watchdog also enforces the uncertainty deadline without frames.
 - Continuous volume shares the single-hand, freshness, scope, Option, editing,
   secure-input, and cancellation gates. It starts from the observed output level;
   Practice never calls the audio device interface. Each write rechecks output

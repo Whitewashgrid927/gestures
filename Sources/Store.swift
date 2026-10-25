@@ -413,8 +413,10 @@ final class GestureStore: ObservableObject {
         if let feedback { scrollIndicator.show(feedback, practicing: testing) }
         else { scrollIndicator.hide() }
         if active.action.kind == .volume && active.action.volumeSettings.showIndicator {
-            let shown = volumeIndicator.show(volume.feedback ?? .init(maximum: active.action.volumeSettings.maximum, preparing: true), practicing: testing)
-            tracking.volumeStatus = shown ? "Fist accepted · volume indicator shown" : "Fist accepted · no display available for indicator"
+            var feedback = volume.feedback ?? .init(maximum: active.action.volumeSettings.maximum, preparing: true)
+            feedback.trackingUncertain = coordinator.continuousNeedsConfidence
+            let shown = volumeIndicator.show(feedback, practicing: testing)
+            tracking.volumeStatus = shown ? (feedback.trackingUncertain ? "Fist accepted · volume paused for confidence" : "Fist accepted · volume indicator shown") : "Fist accepted · no display available for indicator"
         } else { volumeIndicator.hide() }
         guard continuousWatchdog == nil else { return }
         continuousWatchdog = Task { [weak self] in
@@ -422,8 +424,9 @@ final class GestureStore: ObservableObject {
                 try? await Task.sleep(for: .milliseconds(50))
                 guard !Task.isCancelled, let self, let rule = self.coordinator.continuousRule else { return }
                 let age = ProcessInfo.processInfo.systemUptime - self.lastFrameAt
+                let confidenceExpired = self.coordinator.continuousConfidenceDeadline.map { ProcessInfo.processInfo.systemUptime > $0 } ?? false
                 let option = CGEventSource.flagsState(.combinedSessionState).contains(.maskAlternate)
-                if age < 0 || age > 0.25 || !self.cameraRunning || self.isEditing || ActionRunner.secureInput ||
+                if confidenceExpired || age < 0 || age > 0.25 || !self.cameraRunning || self.isEditing || ActionRunner.secureInput ||
                     (rule.requireOptionKey && !option) || (!self.testing && (!self.enabled || (rule.action.kind.needsAccessibility && !ActionRunner.hasAccess))) {
                     self.cancelPreAction(); self.tracking.progress = .init(message: "Continuous action stopped"); return
                 }

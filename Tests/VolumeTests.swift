@@ -72,6 +72,19 @@ extension GesturesTests {
         expect(!rule.enabled && rule.steps.count == 1 && rule.steps[0].pose.kind == .fist, "Fist volume is opt-in with the existing brief pose stability gate")
         rule.enabled = true; _ = try rule.validated()
         let frame: (Double, Double) -> HandFrame = { time, y in .init(time: time, hands: [hand(0.5, y, pose: .fist)]) }
+        func weakFrame(_ time: Double, _ y: Double = 0.5) -> HandFrame {
+            var value = hand(0.5, y, pose: .fist); value.joints["ringTip"]?.confidence = 0.1
+            return .init(time: time, hands: [value])
+        }
+        let flicker = [frame(1, 0.5), weakFrame(1.03), frame(1.07, 0.5), weakFrame(1.1), frame(1.14, 0.5)]
+        expect(matches(flicker, rule: rule) == 1, "Three confident fist observations arm across brief finger-confidence flicker")
+        expect(matches([frame(1, 0.5), weakFrame(1.05), weakFrame(1.1), frame(1.14, 0.5)], rule: rule) == 0,
+               "Uncertain observations cannot replace the three positive fist observations")
+        expect(matches([frame(1, 0.5), weakFrame(1.1), weakFrame(1.2), frame(1.22, 0.5), frame(1.27, 0.5)], rule: rule) == 0,
+               "An uncertainty gap beyond 150 ms resets fist arming")
+        var opened = hand(0.5, 0.5, pose: .fist); opened.fingers[.index] = .extended
+        expect(matches([frame(1, 0.5), frame(1.06, 0.5), .init(time: 1.1, hands: [opened]), frame(1.14, 0.5)], rule: rule) == 0,
+               "One confidently opened finger resets fist arming")
         func armed(_ configuration: GestureRule? = nil, accepted: Bool = true) -> RecognitionCoordinator {
             let value = configuration ?? rule; var engine = RecognitionCoordinator()
             for time in [1.0, 1.06, 1.13] { _ = engine.process(frame(time, 0.5), rules: [value], selected: value.id, app: "test", optionHeld: true) }
@@ -87,6 +100,8 @@ extension GesturesTests {
             ("release", .init(time: 1.18, hands: [hand(pose: .open)])),
             ("loss", .init(time: 1.18, hands: [])),
             ("second hand", .init(time: 1.18, hands: [hand(pose: .fist), hand(pose: .fist, side: .left)])),
+            ("untracked second observation", .init(time: 1.18, hands: [hand(0.5, 0.5, pose: .fist)], detectedHands: 2)),
+            ("opened finger", .init(time: 1.18, hands: [opened])),
             ("hand swap", .init(time: 1.18, hands: [hand(0.5, 0.51, pose: .fist, side: .left)])),
             ("jump", frame(1.18, 0.8)), ("stale", frame(1.5, 0.52)), ("duplicate time", frame(1.13, 0.52)), ("backwards", frame(1.12, 0.52))
         ]
@@ -102,8 +117,33 @@ extension GesturesTests {
         expect(engine.process(frame(1.18, 0.52), rules: [edited], selected: edited.id, app: "test", optionHeld: false).volume == nil, "Editing active volume settings cancels the session")
         engine = armed()
         expect(engine.process(frame(1.18, 0.52), rules: [rule], selected: rule.id, app: "another", optionHeld: false).volume == nil, "Global volume cancels on foreground changes too")
-        engine = armed(); var uncertain = hand(0.5, 0.52, pose: .fist); uncertain.joints["ringTip"]?.confidence = 0.1
-        expect(engine.process(.init(time: 1.18, hands: [uncertain]), rules: [rule], selected: rule.id, app: "test", optionHeld: false).volume == nil, "Uncertain required finger cannot drive volume")
+        engine = armed()
+        let paused = engine.process(weakFrame(1.18, 0.52), rules: [rule], selected: rule.id, app: "test", optionHeld: false)
+        expect(paused.volume == 0 && engine.continuousRule != nil && engine.continuousNeedsConfidence,
+               "Brief finger uncertainty freezes volume while retaining the indicator")
+        let deadline = engine.continuousConfidenceDeadline
+        expect(deadline.map { abs($0 - 1.28) < 1e-9 } == true, "Uncertainty deadline is bounded from the last confident observation")
+        let stillPaused = engine.process(weakFrame(1.23, 0.54), rules: [rule], selected: rule.id, app: "test", optionHeld: false)
+        expect(stillPaused.volume == 0 && engine.continuousConfidenceDeadline == deadline, "Repeated weak observations cannot extend the pause deadline")
+        let recovered = engine.process(frame(1.26, 0.56), rules: [rule], selected: rule.id, app: "test", optionHeld: false)
+        expect(recovered.volume == 0 && !engine.continuousNeedsConfidence, "Recovery discards movement made while confidence was low")
+        expect(engine.process(frame(1.3, 0.56), rules: [rule], selected: rule.id, app: "test", optionHeld: false).volume == 0, "Recovery has no delayed movement tail")
+        expect((engine.process(frame(1.34, 0.58), rules: [rule], selected: rule.id, app: "test", optionHeld: false).volume ?? 0) > 0, "New confident movement resumes volume control")
+        for input in [weakFrame(1.29, 0.54), frame(1.29, 0.54)] {
+            engine = armed(); _ = engine.process(weakFrame(1.18, 0.52), rules: [rule], selected: rule.id, app: "test", optionHeld: false)
+            let expired = engine.process(input, rules: [rule], selected: rule.id, app: "test", optionHeld: false)
+            expect(expired.volume == nil && engine.continuousRule == nil, "Expired uncertainty stops even when a clear frame arrives late")
+        }
+        var lowPalm = weakFrame(1.18, 0.52); lowPalm.hands[0].confidence = 0.4
+        engine = armed()
+        expect(engine.process(lowPalm, rules: [rule], selected: rule.id, app: "test", optionHeld: false).volume == 0 && engine.continuousNeedsConfidence,
+               "Low palm confidence can pause but cannot authorize volume movement")
+        var ambiguous = RecognitionCoordinator(); var ambiguousMatch = false
+        for time in [1.0, 1.06, 1.13] {
+            var input = frame(time, 0.5); input.detectedHands = 2
+            ambiguousMatch = ambiguousMatch || ambiguous.process(input, rules: [rule], selected: rule.id, app: "test", optionHeld: false).match != nil
+        }
+        expect(!ambiguousMatch && ambiguous.continuousRule == nil, "A second detected hand blocks volume arming even if its palm is untracked")
         var pinch = GestureRule.appSwitcherPreset; pinch.enabled = true
         var closed = hand(pose: .fist); closed.pinchRatio = 0.15
         var priority = RecognitionCoordinator(); var winner: ActionKind?

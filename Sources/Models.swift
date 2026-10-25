@@ -272,6 +272,20 @@ struct TrackedHand: Sendable, Equatable {
         }
         return "Hold one clear fist briefly"
     }
+    /// Uncertainty can freeze an existing volume session, but can never authorize movement.
+    func fistIsUncertain(hand: HandChoice, minimum: Double) -> Bool {
+        guard confidence.isFinite, (0.3...1).contains(confidence), palm.finite,
+              (0...1).contains(palm.x), (0...1).contains(palm.y),
+              hand == .either || side == hand,
+              !matches(.init(kind: .fist), hand: hand, minimum: minimum) else { return false }
+        for finger in [Finger.index, .middle, .ring, .little] where fingers[finger] == .extended {
+            let prefix = finger.rawValue.lowercased()
+            if ["MCP", "PIP", "DIP", "Tip"].allSatisfy({ suffix in
+                joints[prefix + suffix].map { $0.confidence >= minimum && $0.point.finite } == true
+            }) { return false } // A confidently opened finger is a release, not uncertainty.
+        }
+        return true
+    }
 }
 struct HandFrame: Sendable {
     var time: Double

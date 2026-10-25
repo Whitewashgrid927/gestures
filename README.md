@@ -40,8 +40,14 @@ Use **Practice only** first: close your fist with the whole hand visible, briefl
 hold the pose, then move up for louder or down for quieter. Open your hand to stop.
 Practice displays a simulated level and never reads or changes system volume.
 A fist requires four confidently measured finger bends; hidden fingertips are not
-required when the visible joints already prove the bend. Missing or uncertain bend
-evidence still blocks recognition. The camera label identifies the finger to show
+required when the visible joints already prove the bend. Arming needs three fully
+confident fist observations spanning at least 120 ms. Brief uncertain observations
+may bridge a gap of at most 150 ms between confident observations; they cannot arm
+the gesture. A clearly opened finger resets that progress. During control, the same
+short uncertainty keeps the indicator visible with **Hold steady** and freezes
+volume. Confidence recovery discards movement made while paused. Longer uncertainty,
+a missing hand, a second hand, or an opened hand stops the session.
+The camera label identifies the finger to show
 and explicitly reports when the fist is seen. **Last volume check** distinguishes
 recognition guidance from an accepted gesture and a displayed indicator.
 The **Best fist** summary preserves the strongest attempt after you lower your

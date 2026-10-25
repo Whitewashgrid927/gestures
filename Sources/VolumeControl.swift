@@ -153,7 +153,8 @@ struct VolumeFeedback: Equatable {
     var maximum = 0.8
     var muted = false
     var preparing = false
-    var label: String { preparing ? "Preparing" : muted ? "Muted" : level >= maximum - 0.005 ? "At ceiling" : "Output volume" }
+    var trackingUncertain = false
+    var label: String { preparing ? "Preparing" : trackingUncertain ? "Hold steady" : muted ? "Muted" : level >= maximum - 0.005 ? "At ceiling" : "Output volume" }
 }
 
 /// One synchronous write at a time, with readback before another change. Practice uses no device API.
