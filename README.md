@@ -2,7 +2,7 @@
 
 A native Mac prototype for defining your own camera-based hand gestures and assigning actions. Built with SwiftUI, native Liquid Glass, AVFoundation, and Apple Vision. No accounts, external packages, cloud inference, or downloaded models are required. The optional desktop ripple uses local ScreenCaptureKit and Metal.
 
-**[Download Gestures 0.3.0 for Mac](https://github.com/Whitewashgrid927/gestures/releases/download/v0.3.0/Gestures-0.3.0-macOS-arm64.zip)** — Apple silicon, macOS 26 or newer. Unzip the download and move **Gestures.app** to **Applications**. No build tools are needed. The app is Developer ID signed and notarized by Apple. If updating, quit Gestures from its menu-bar menu before replacing the existing app; your saved gestures remain in place.
+**[Download Gestures 0.4.4 for Mac](https://github.com/Whitewashgrid927/gestures/releases/download/v0.4.4/Gestures-0.4.4-macOS-arm64.zip)** — Apple silicon, macOS 26 or newer. Unzip the download and move **Gestures.app** to **Applications**. No build tools are needed. The app is Developer ID signed and notarized by Apple. If updating, quit Gestures from its menu-bar menu before replacing the existing app; your saved gestures remain in place.
 
 [Release notes and checksums](https://github.com/Whitewashgrid927/gestures/releases/latest) · [Privacy](PRIVACY.md) · [Safety and security](SECURITY.md)
 
@@ -13,7 +13,7 @@ A native Mac prototype for defining your own camera-based hand gestures and assi
 - If you select a specific camera, it must be available when capture starts. Gestures asks you to reconnect it or choose another device instead of silently opening a different camera. **System default** remains available as an explicit choice.
 - Accessibility permission for keyboard, Space-switching, and scrolling actions. Test mode does not need that permission.
 
-This source version adds [fist-and-slide volume control](#fist--slide-for-volume) with a native Liquid Glass indicator. The published download above remains 0.3.0 until the next release. A locally built app uses ad-hoc signing unless you supply an identity.
+This release adds [fist-and-slide volume control](#fist--slide-for-volume) with a native Liquid Glass indicator, configurable movement and volume limits, and a Practice mode that never changes sound. A locally built app uses ad-hoc signing unless you supply an identity.
 
 ## First use
 
