@@ -2,13 +2,17 @@
 
 A native Mac prototype for defining your own camera-based hand gestures and assigning actions. Built with SwiftUI, native Liquid Glass, AVFoundation, and Apple Vision. No accounts, external packages, cloud inference, or downloaded models are required. The optional desktop ripple uses local ScreenCaptureKit and Metal.
 
+**[Download Gestures for Mac](https://github.com/Whitewashgrid927/gestures/releases/download/v0.1.12/Gestures-0.1.12-macOS-arm64.zip)** — Apple silicon, macOS 26 or newer. Unzip the download and move **Gestures.app** to **Applications**. No build tools are needed. The app is Developer ID signed and notarized by Apple.
+
+[Release notes and checksums](https://github.com/Whitewashgrid927/gestures/releases/latest) · [Privacy](PRIVACY.md) · [Safety and security](SECURITY.md)
+
 ## Requirements
 
 - An Apple-silicon Mac running macOS 26 or newer.
 - A camera for live recognition. Camera access is requested only when you choose **Start camera**.
 - Accessibility permission for keyboard, Space-switching, and scrolling actions. Test mode does not need that permission.
 
-Version 0.1.12 targets direct distribution on GitHub. Download and unzip the app from a release, then move it to Applications. See the release verification notes for signing and notarization status. A locally built app uses ad-hoc signing unless you supply an identity.
+Version 0.1.12 is distributed directly through GitHub. A locally built app uses ad-hoc signing unless you supply an identity.
 
 ## First use
 
